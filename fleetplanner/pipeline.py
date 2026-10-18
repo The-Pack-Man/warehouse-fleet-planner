@@ -13,7 +13,7 @@ from typing import Any
 from .sim import simulate
 from .solver import Planner
 from .spec import MissionSpec
-from .grounding import ground
+from .grounding import ground, review_refusal
 from .translate import ChatFn, translate
 from .validate import validate
 from .world import World
@@ -43,6 +43,10 @@ def handle_request(world: World, request: str, chat: ChatFn, standing: list[Any]
     if t.kind == "clarify":
         return {**out, "status": "clarify", "message": t.question}
     if t.kind == "refuse":
+        r = review_refusal(world, request, standing)
+        if r is not None:
+            out["grounding"] = {"status": r.status, "notes": [f"The model refused: {t.reason}"], "message": r.message}
+            return {**out, "status": r.status, "message": r.message}
         return {**out, "status": "refuse", "message": t.reason}
 
     g = ground(world, request, t.spec, standing)

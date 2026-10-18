@@ -59,6 +59,9 @@ claims:
   - id: C17
     text: Caught and fixed a safety regression introduced by my own grounding check (it assigned a job to a robot the request said was going down). Added a regression test from the model's exact output and a property test over all 80 requests, and showed via offline replay of six saved runs that the fix changes exactly that one outcome.
     evidence: [fleetplanner/grounding.py, tests/test_grounding.py, results/replay_grounding_20261018T211125Z_qwen2.5-7b.json]
+  - id: C18
+    text: Extended the deterministic checks to refuse implied rule overrides ("aisle 3 looks clear now") while ignoring waiting phrases, and to turn refusals over nonexistent robots or aisles into clarifying questions; patterns derived from dev failures only, with a second held-out set committed before the code.
+    evidence: [fleetplanner/grounding.py, tests/test_grounding.py, evals/holdout2.yaml]
   - id: C9
     text: Demonstrated the simulator as referee. A naive plan that ignores an aisle closure is flagged with three closed-zone violations, while the solver's plan for the same request waits out the closure with none.
     evidence: [plans/naive_ignores_closure.json, specs/examples/aisle_closed.yaml, docs/naive.gif, tests/test_core.py]
@@ -143,7 +146,7 @@ metrics:
     date: 2026-10-18
   - id: M4
     name: Test suite passing
-    value: 304
+    value: 323
     status: measured
     method: pytest, 2026-10-18
     artifact: ""
@@ -160,7 +163,7 @@ limitations:
   - Each condition run once at temperature 0; Ollama is not fully deterministic, so differences of a request or two are noise.
   - Held-out failures remain (all safe): an implied rule override planned instead of refused (h18), an over-cautious refusal (h02), refusing instead of asking about unknown names on 7B (h13, h14).
   - Prompt v2 introduced an over-refusal on 7B for requests that add a closure (c03, c10).
-  - The held-out set has now been used; measuring further fixes needs a new one.
+  - Held-out set 1 has been used to design v3 and is now effectively a dev set; v3 is measured on held-out set 2 (run pending). No v3 results may be cited until then.
   - The request set is small (60) and written by the system's author, so it may favor the prompt's phrasing.
   - Greedy allocation and prioritized routing are safe but not optimal.
   - Grid world with discrete time; no vehicle dynamics.

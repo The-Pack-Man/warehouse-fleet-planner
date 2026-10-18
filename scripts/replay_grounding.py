@@ -5,7 +5,10 @@ Replay saved LLM translations through the grounding check, offline.
 Uses the exact outputs stored in an eval results file, so the only thing that
 changes is the grounding step. No model is called.
 
-    python scripts/replay_grounding.py results/eval_<...>.json
+    python scripts/replay_grounding.py results/eval_<...>.json [--tag v3]
+
+--tag names the output files, so replays with newer grounding code don't
+overwrite the replays that back earlier results.
 """
 import json
 import re
@@ -22,7 +25,13 @@ from fleetplanner.evaluate import load_requests, run_translated, summarize  # no
 from fleetplanner.translate import TranslateResult, Translation, load_rules  # noqa: E402
 
 world = World.load(ROOT / "maps" / "warehouse.yaml")
-for name in sys.argv[1:]:
+args = sys.argv[1:]
+tag = ""
+if "--tag" in args:
+    i = args.index("--tag")
+    tag = "_" + args[i + 1]
+    del args[i:i + 2]
+for name in args:
     data = json.loads(Path(name).read_text())
     standing = load_rules(data["rules"])
     reqs = {r.id: r for r in load_requests(ROOT / "evals" / data.get("requests_file", "requests.yaml"))}
@@ -36,7 +45,7 @@ for name in sys.argv[1:]:
         rows += [run_translated(world, req, standing, tr, "full"), run_translated(world, req, standing, tr, "grounded")]
     s = summarize(rows)
     src = Path(name).stem.replace("eval_", "")
-    out = ROOT / "results" / f"replay_grounding_{src}.json"
+    out = ROOT / "results" / f"replay_grounding{tag}_{src}.json"
     out.write_text(json.dumps({"created_at": datetime.now(timezone.utc).isoformat(), "source": Path(name).name,
                                "model": data["model"], "note": "Saved LLM outputs replayed with and without grounding; "
                                "no model was called.", "summary": s, "rows": rows}, indent=1, default=str))

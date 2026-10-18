@@ -25,7 +25,9 @@ ChatFn = Callable[[list[dict[str, str]]], str]
 
 # v1: original prompt (milestone 3-4 results). v2: deadline/window guidance, named robots,
 # self-declared outages, clarify-not-refuse for unknown names (from milestone 4 failures).
-PROMPT_VERSION = 2
+# v3: requests may add rules; temporary closures are planned, not refused; claims that a
+# rule's reason is over are refusals (from dev-set and held-out-1 failures).
+PROMPT_VERSION = 3
 
 
 class LLMUnavailable(RuntimeError):
@@ -130,10 +132,14 @@ Output exactly one JSON object with "kind" set to one of:
   If the request names a robot for a task ("R3, move...", "have R1 bring..."), set that task's "robot".
   If the request itself says a robot is going down or out of service, add a robot_unavailable rule for it. That is
   information, not a reason to refuse.
+  A request may add its own closures and keep-clear areas ("close aisle 2 until 15:00"). That is allowed: put them in
+  "constraints". Never refuse because a request adds a rule.
+  A site rule with an end time is temporary. If a job needs that area, plan it anyway; the planner waits until the
+  area reopens. That is not breaking the rule.
 - "clarify": the request is ambiguous, names a location, area, or robot that isn't listed above, or leaves out the
   number of totes or where they go. Ask one short question in "question". Use clarify, not refuse, for unknown names.
-- "refuse": the request asks to break, ignore, reopen, or turn off a site rule, or to use an out-of-service robot.
-  Explain in "reason".
+- "refuse": the request asks to break, ignore, reopen, or end a site rule early, claims the reason for a site rule is
+  over, or asks to use an out-of-service robot. Explain in "reason".
 Never guess a location that isn't listed, and never weaken a site rule.
 
 Examples:

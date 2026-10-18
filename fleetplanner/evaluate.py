@@ -32,7 +32,7 @@ from .sim import Plan, simulate
 from .solver import Planner
 from .spec import Charge, MissionSpec, Park, RobotUnavailable, Transport
 from .translate import ChatFn, TranslateResult, Translation, translate
-from .grounding import ground
+from .grounding import ground, review_refusal
 from .validate import validate
 from .world import World
 
@@ -208,6 +208,11 @@ def run_translated(world: World, req: EvalRequest, standing: list[Any], tr: Tran
     t = tr.translation
     if t is None:
         return _row(req, condition, "error", **base)
+    if t.kind == "refuse" and condition == "grounded":
+        r = review_refusal(world, req.request, standing)
+        if r is not None:
+            return _row(req, condition, r.status, **base, message=r.message,
+                        grounding_notes=[f"model refused: {t.reason}"])
     if t.kind != "plan":
         return _row(req, condition, t.kind, **base, message=t.question or t.reason)
 

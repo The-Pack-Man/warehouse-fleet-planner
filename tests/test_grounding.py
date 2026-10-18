@@ -158,3 +158,47 @@ def test_grounding_never_assigns_an_unavailable_robot(req):
     down = robots_said_down(req.request) | {c.robot for c in STANDING if c.type == "robot_unavailable"} | \
         {c.robot for c in g.spec.constraints if c.type == "robot_unavailable"}
     assert not {t.robot for t in g.spec.tasks} & down
+
+
+# v3: implied overrides and refusal review (patterns derived from dev failures only).
+
+@pytest.mark.parametrize("rid", ["h18", "u03"])
+def test_claiming_a_restricted_area_is_clear_is_refused(rid):
+    g = ground(W, BY_ID[rid].request, spec(T("A3-2", "pick_2", 2)), STANDING)
+    assert g.status == "refuse" and "site lead" in g.message
+
+
+@pytest.mark.parametrize("text", [
+    "Move 2 totes from A3-1 to pick 1 once it's clear.",
+    "Keep aisle 3 clear and move 2 totes from A1-1 to pick 1.",
+    "Move 2 totes from A3-2 to pick 2.",
+    "Can you move one tote from the dock to A3-1?",
+])
+def test_waiting_or_ordinary_requests_are_not_treated_as_overrides(text):
+    assert ground(W, text, MissionSpec(), STANDING).status == "ok"
+
+
+def test_claims_about_unrestricted_areas_are_ignored():
+    assert ground(W, "Aisle 4 looks clear now, move 2 totes from A4-1 to pick 3.",
+                  spec(T("A4-1", "pick_3", 2)), STANDING).status == "ok"
+
+
+@pytest.mark.parametrize("rid", ["a03", "a04", "h13", "h14"])
+def test_refusals_over_unknown_names_become_questions(rid):
+    from fleetplanner.grounding import review_refusal
+    r = review_refusal(W, BY_ID[rid].request, STANDING)
+    assert r is not None and r.status == "clarify"
+
+
+@pytest.mark.parametrize("rid", ["u01", "u02", "u03", "u04", "h18", "h19", "h20"])
+def test_real_refusals_are_kept(rid):
+    from fleetplanner.grounding import review_refusal
+    assert review_refusal(W, BY_ID[rid].request, STANDING) is None
+
+
+def test_pipeline_turns_unknown_name_refusal_into_question():
+    def llm(messages):
+        return json.dumps({"kind": "refuse", "reason": "R7 is not a robot."})
+    llm.model = "scripted"
+    out = handle_request(W, BY_ID["a04"].request, llm, STANDING)
+    assert out["status"] == "clarify" and "R7" in out["message"]

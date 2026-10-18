@@ -176,6 +176,14 @@ OVERRIDE = re.compile(r"\b(ignore|disregard|don'?t worry about|never mind|forget
                       r"disable|lift|remove|reopen|re-open|override|bypass|skip|cancel)\b")
 RULE_WORDS = re.compile(r"\b(closures?|closed|rules?|safety|maintenance|out of service|keep[- ]clear|restrictions?)\b")
 
+# Implied overrides: the request asserts that the reason for a site rule is over
+# ("aisle 3 looks clear now", "the spill's cleaned up") instead of asking to lift it.
+STATE_CLAIM = re.compile(
+    r"\b(?:looks|is|it's|it is|seems|now)\s+(?:\w+\s+){0,2}?(?:clear|fine|ok|okay|open|safe|dry|done)\b"
+    r"|\b(?:cleaned|cleared|tidied)\s+up\b"
+    r"|\b(?:spill|mess|hazard)(?:'s|\s+is|\s+has been)?\s+(?:gone|cleaned|cleared|fixed|dry)\b")
+WAITING = re.compile(r"\b(?:once|when|after|until|till|as soon as|if)\b")
+
 
 # ── the check ─────────────────────────────────────────────────────────────────
 
@@ -191,6 +199,20 @@ def ground(world: World, request: str, spec: MissionSpec, standing: list[Any]) -
         return Grounding("refuse", None, notes,
                          f"The request asks to set aside a site rule (\"{m.group(1)}\"). Site rules can only be changed "
                          "by a site lead, not from a request.")
+
+    # 1b. Implied overrides: claiming a restricted area is fine now, about an area a
+    # site rule restricts during the shift. "Once it's clear" (waiting) is not a claim.
+    shift_min = int(world.start_time[:2]) * 60 + int(world.start_time[3:])
+    restricted = {c.zone for c in standing if isinstance(c, (ZoneClosed, KeepClear))
+                  and (c.end is None or int(c.end[:2]) * 60 + int(c.end[3:]) > shift_min)}
+    if zones_named & restricted:
+        for clause in re.split(r"[.;,!?]|\bso\b|\band\b", text.lower()):
+            claim = STATE_CLAIM.search(clause)
+            if claim and not WAITING.search(clause[:claim.start()]):
+                zone = sorted(zones_named & restricted)[0].replace("_", " ")
+                return Grounding("refuse", None, notes,
+                                 f"The request says {zone} is clear, but a site rule still restricts it. Only a site "
+                                 "lead can lift the rule; until then robots will wait for it to end.")
 
     # 2. Robots. A robot can be mentioned as the one to use ("have R1 bring...") or as
     # context ("R4 is going down for maintenance"). Only the first is a request to use it.
@@ -305,3 +327,25 @@ def ground(world: World, request: str, spec: MissionSpec, standing: list[Any]) -
             constraints[i] = c.model_copy(update=update)
 
     return Grounding("ok", MissionSpec(tasks=tasks, constraints=constraints), notes)
+
+
+def review_refusal(world: World, request: str, standing: list[Any]) -> Grounding | None:
+    """The LLM refused. If the only problem is a name that isn't on the map, ask instead.
+
+    Returns a clarify result, or None to keep the refusal. Refusals for rule
+    overrides or out-of-service robots are always kept.
+    """
+    out_of_service = {c.robot for c in standing if isinstance(c, RobotUnavailable)}
+    named = mentioned_robots(request)
+    if (named & out_of_service) - robots_said_down(request):
+        return None
+    if ground(world, request, MissionSpec(), standing).status == "refuse":
+        return None                                   # an explicit or implied override
+    unknown_robots = sorted(named - {r.id for r in world.robots})
+    if unknown_robots:
+        return Grounding("clarify", None, [], f"There's no robot called {unknown_robots[0]}. Which robot did you mean?")
+    aisles = {z.split("_")[1] for z in world.zones if z.startswith("aisle_")}
+    unknown_aisles = sorted({n for n in re.findall(r"\baisle\s*(\d+)", request.lower()) if n not in aisles}, key=int)
+    if unknown_aisles:
+        return Grounding("clarify", None, [], f"There's no aisle {unknown_aisles[0]}. Which aisle did you mean?")
+    return None
