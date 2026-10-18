@@ -33,12 +33,15 @@ def _html(log: dict, html: str | None, open_it: bool, name: str) -> None:
 
 def _ask(args) -> None:
     from .pipeline import handle_request
-    from .translate import load_rules, openai_chat
+    from .translate import LLMUnavailable, load_rules, openai_chat
 
     world = World.load(args.map)
     standing = load_rules(yaml.safe_load(Path(args.rules).read_text())) if args.rules else []
     chat = openai_chat(model=args.model, base_url=args.base_url)
-    out = handle_request(world, args.request, chat, standing)
+    try:
+        out = handle_request(world, args.request, chat, standing)
+    except LLMUnavailable as exc:
+        raise SystemExit(f"Model unavailable: {exc}")
     label = {"planned": "Planned", "clarify": "Needs clarification", "refuse": "Refused",
              "reject": "Rejected", "error": "Error"}[out["status"]]
     print(f"{label} ({out['model']}, {out['translator']['attempts']} attempt(s), {out['translator']['latency_s']:.1f}s)")

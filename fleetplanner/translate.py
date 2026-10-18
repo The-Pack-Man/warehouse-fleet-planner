@@ -24,6 +24,10 @@ from .world import World
 ChatFn = Callable[[list[dict[str, str]]], str]
 
 
+class LLMUnavailable(RuntimeError):
+    """The model server can't be reached or doesn't have the requested model."""
+
+
 class Translation(BaseModel):
     kind: Literal["plan", "clarify", "refuse"]
     spec: MissionSpec | None = Field(default=None, description="Required when kind is 'plan'")
@@ -133,10 +137,14 @@ def build_messages(world: World, request: str, standing: list[Any]) -> list[dict
 
 def openai_chat(model: str | None = None, base_url: str | None = None, api_key: str | None = None,
                 temperature: float = 0.0, structured: bool = True) -> ChatFn:
-    """Chat function for any OpenAI-compatible server. Defaults to local Ollama."""
-    from openai import APIStatusError, OpenAI
+    """Chat function for any OpenAI-compatible server. Defaults to local Ollama.
 
-    client = OpenAI(base_url=base_url or os.getenv("LLM_BASE_URL", "http://localhost:11434/v1"),
+    The default uses 127.0.0.1 rather than localhost: on Windows, localhost can
+    resolve to IPv6 and reach a different server than the `ollama` command uses.
+    """
+    from openai import APIConnectionError, APIStatusError, NotFoundError, OpenAI
+
+    client = OpenAI(base_url=base_url or os.getenv("LLM_BASE_URL", "http://127.0.0.1:11434/v1"),
                     api_key=api_key or os.getenv("LLM_API_KEY", "ollama"))
     model = model or os.getenv("LLM_MODEL", "qwen2.5:7b")
     schema_format = {"type": "json_schema",
@@ -147,6 +155,16 @@ def openai_chat(model: str | None = None, base_url: str | None = None, api_key: 
         try:
             resp = client.chat.completions.create(model=model, messages=messages, temperature=temperature,
                                                   response_format=state["format"])
+        except NotFoundError as exc:
+            raise LLMUnavailable(
+                f"The server at {client.base_url} doesn't have the model '{model}'. "
+                f"If you use Ollama, run `ollama pull {model}`; if it's already pulled, a different server is "
+                f"answering on that address. Run `ollama list` and pass the right address with --base-url "
+                f"(for example http://127.0.0.1:11434/v1).") from exc
+        except APIConnectionError as exc:
+            raise LLMUnavailable(
+                f"Couldn't reach a model server at {client.base_url}. Start Ollama (or your server), "
+                f"or pass the right address with --base-url.") from exc
         except APIStatusError:
             if state["format"]["type"] == "json_object":
                 raise

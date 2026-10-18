@@ -133,6 +133,8 @@ Requests that exercise each path, with today's rules (aisle 3 closed until 14:20
 | Move 10 totes from A5-2 to pick 1 by 14:03 | Rejected: earliest possible finish is later |
 | Keep the dock area clear all shift and bring 2 totes from the dock to A1-1 | Rejected: contradiction |
 
+If you see "doesn't have the model" even though `ollama list` shows it, a second server is answering on the same port (common on Windows when Ollama also runs in Docker or WSL). The default address is `127.0.0.1:11434`, which matches the `ollama` command; pass `--base-url` to choose another.
+
 Use `--model qwen2.5:14b` for a larger model, `--show-spec` to see what the LLM produced, and `--json out.json` to save the full trace. `--base-url` and `--model` point at any OpenAI-compatible endpoint.
 
 These are the planned behaviors. Measuring how often a given model actually gets them right is milestone 4.

@@ -223,3 +223,36 @@ def test_openai_client_structured_output_and_fallback(server):
     assert server.seen[0]["temperature"] == 0.0 and server.seen[0]["model"] == "qwen2.5:7b"
     if server.reject_schemas:
         assert server.seen[-1]["response_format"] == {"type": "json_object"}
+
+
+def test_missing_model_and_unreachable_server_give_clear_errors(monkeypatch):
+    pytest.importorskip("openai")
+    from fleetplanner.translate import LLMUnavailable
+
+    class NotFound(BaseHTTPRequestHandler):
+        def log_message(self, *a):
+            pass
+
+        def do_POST(self):
+            self.rfile.read(int(self.headers["Content-Length"]))
+            data = json.dumps({"error": {"message": "model 'qwen2.5:7b' not found", "type": "not_found_error"}}).encode()
+            self.send_response(404)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+    monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
+    monkeypatch.setenv("no_proxy", "127.0.0.1,localhost")
+    s = ThreadingHTTPServer(("127.0.0.1", 0), NotFound)
+    threading.Thread(target=s.serve_forever, daemon=True).start()
+    try:
+        host, port = s.server_address
+        chat = openai_chat(model="qwen2.5:7b", base_url=f"http://{host}:{port}/v1", api_key="x")
+        with pytest.raises(LLMUnavailable, match="ollama pull qwen2.5:7b"):
+            translate(W, "x", chat)
+    finally:
+        s.shutdown()
+    dead = openai_chat(model="m", base_url="http://127.0.0.1:9/v1", api_key="x")
+    with pytest.raises(LLMUnavailable, match="Couldn't reach"):
+        translate(W, "x", dead)
