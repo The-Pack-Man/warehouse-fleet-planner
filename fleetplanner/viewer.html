@@ -345,9 +345,11 @@ function render() {
       ctx.fillText(label, cx(x), cx(y) + 1);
     } else {
       ctx.fillStyle = "#e8792b"; ctx.beginPath(); ctx.arc(cx(x), cx(y), Math.max(2.5, c * .09), 0, Math.PI * 2); ctx.fill();
-      if (c >= 30) {
-        ctx.fillStyle = "#3a4247"; ctx.font = `600 ${Math.round(c * .27)}px Barlow Condensed, sans-serif`;
-        ctx.fillText(label, cx(x), px(y) + c * .82);
+      if (c >= 30) {   // light halo keeps the label readable on hatched (closed) aisles
+        ctx.font = `600 ${Math.round(c * .27)}px Barlow Condensed, sans-serif`;
+        ctx.lineJoin = "round"; ctx.lineWidth = 3.5; ctx.strokeStyle = "rgba(225,228,229,.92)";
+        ctx.strokeText(label, cx(x), px(y) + c * .82);
+        ctx.fillStyle = "#3a4247"; ctx.fillText(label, cx(x), px(y) + c * .82);
       }
     }
   }
