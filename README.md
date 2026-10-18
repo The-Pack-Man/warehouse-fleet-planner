@@ -1,5 +1,7 @@
 # Warehouse Fleet Planner
 
+[![tests](https://github.com/The-Pack-Man/warehouse-fleet-planner/actions/workflows/tests.yml/badge.svg)](https://github.com/The-Pack-Man/warehouse-fleet-planner/actions/workflows/tests.yml)
+
 **LLM translates, classical solver plans, validator checks.** A warehouse supervisor types *"restock aisle 4 from the dock before 2:30, keep the charging bay clear."* A robot fleet needs exact tasks, assignments, and collision-free routes. This project tests whether that translation can be safe when an LLM is involved, by keeping the LLM out of the planning itself.
 
 ![Replay of a shift: four robots, one out of service, aisle 3 closed](docs/demo.gif)
