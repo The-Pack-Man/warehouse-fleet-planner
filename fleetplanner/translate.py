@@ -81,7 +81,7 @@ EXAMPLES = [
 ]
 
 
-def system_prompt(world: World, standing: list[Any]) -> str:
+def system_prompt(world: World, standing: list[Any], rules_in_spec: bool = False) -> str:
     robots = "\n".join(f"- {r.id}: battery {r.battery:.0f}%, carries up to {r.capacity} totes" for r in world.robots)
     places = "\n".join(f"- {k}: {world.descriptions.get(k, '')}".rstrip(": ") for k in world.locations
                        if not k.startswith("home"))
@@ -89,6 +89,8 @@ def system_prompt(world: World, standing: list[Any]) -> str:
     conventions = "\n".join(f"- {c}" for c in world.conventions)
     rules = "\n".join(f"- {_rule_text(c)}" for c in standing) or "- none"
     examples = "\n\n".join(f"Request: {q}\nOutput: {json.dumps(a)}" for q, a in EXAMPLES)
+    rules_heading = (RULES_IN_SPEC if rules_in_spec else
+                     "Site rules already in force (added automatically; never repeat or remove them):")
     return f"""You turn a warehouse supervisor's request into a JSON mission spec for a robot fleet.
 You do not plan routes or assign robots; a separate planner does that.
 
@@ -107,7 +109,7 @@ Areas (use these exact names for rules):
 Site conventions:
 {conventions}
 
-Site rules already in force (added automatically; never repeat or remove them):
+{rules_heading}
 {rules}
 
 Output exactly one JSON object with "kind" set to one of:
@@ -128,15 +130,20 @@ Examples:
 {examples}"""
 
 
-def build_messages(world: World, request: str, standing: list[Any]) -> list[dict[str, str]]:
-    return [{"role": "system", "content": system_prompt(world, standing)},
+RULES_IN_SPEC = ("Site rules in force. Nothing adds them for you: include every one of them in "
+                 "spec.constraints, exactly as listed, along with any rules the request adds:")
+
+
+def build_messages(world: World, request: str, standing: list[Any], rules_in_spec: bool = False) -> list[dict[str, str]]:
+    return [{"role": "system", "content": system_prompt(world, standing, rules_in_spec)},
             {"role": "user", "content": f"Request: {request}\nOutput:"}]
 
 
 # ── model access ──────────────────────────────────────────────────────────────
 
 def openai_chat(model: str | None = None, base_url: str | None = None, api_key: str | None = None,
-                temperature: float = 0.0, structured: bool = True) -> ChatFn:
+                temperature: float = 0.0, structured: bool = True, schema: type[BaseModel] | None = None,
+                max_tokens: int | None = None) -> ChatFn:
     """Chat function for any OpenAI-compatible server. Defaults to local Ollama.
 
     The default uses 127.0.0.1 rather than localhost: on Windows, localhost can
@@ -147,14 +154,16 @@ def openai_chat(model: str | None = None, base_url: str | None = None, api_key: 
     client = OpenAI(base_url=base_url or os.getenv("LLM_BASE_URL", "http://127.0.0.1:11434/v1"),
                     api_key=api_key or os.getenv("LLM_API_KEY", "ollama"))
     model = model or os.getenv("LLM_MODEL", "qwen2.5:7b")
+    schema = schema or Translation
     schema_format = {"type": "json_schema",
-                     "json_schema": {"name": "translation", "schema": Translation.model_json_schema()}}
+                     "json_schema": {"name": schema.__name__.lower(), "schema": schema.model_json_schema()}}
+    extra = {"max_tokens": max_tokens} if max_tokens else {}
     state = {"format": schema_format if structured else {"type": "json_object"}}
 
     def chat(messages: list[dict[str, str]]) -> str:
         try:
             resp = client.chat.completions.create(model=model, messages=messages, temperature=temperature,
-                                                  response_format=state["format"])
+                                                  response_format=state["format"], **extra)
         except NotFoundError as exc:
             raise LLMUnavailable(
                 f"The server at {client.base_url} doesn't have the model '{model}'. "
@@ -170,7 +179,7 @@ def openai_chat(model: str | None = None, base_url: str | None = None, api_key: 
                 raise
             state["format"] = {"type": "json_object"}   # server can't handle the schema: fall back to JSON mode
             resp = client.chat.completions.create(model=model, messages=messages, temperature=temperature,
-                                                  response_format=state["format"])
+                                                  response_format=state["format"], **extra)
         return resp.choices[0].message.content or ""
 
     chat.model = model  # type: ignore[attr-defined]
@@ -191,9 +200,11 @@ def _parse(text: str) -> Translation:
 
 
 def translate(world: World, request: str, chat: ChatFn, standing: list[Any] | None = None,
-              max_repairs: int = 2) -> TranslateResult:
+              max_repairs: int = 2, rules_in_spec: bool = False) -> TranslateResult:
+    """rules_in_spec=True makes the LLM responsible for copying site rules into the spec
+    (used only to measure what happens when nothing merges them back)."""
     standing = standing or []
-    messages = build_messages(world, request, standing)
+    messages = build_messages(world, request, standing, rules_in_spec)
     t0 = time.monotonic()
     raw: list[str] = []
     errors: list[str] = []

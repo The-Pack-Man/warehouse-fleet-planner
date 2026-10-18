@@ -305,6 +305,12 @@ class Planner:
             if task.robot and task.robot not in its:
                 issues.append(f"{task.id}: unknown robot {task.robot}")
                 continue
+            names = ([task.from_location, task.to_location] if isinstance(task, Transport)
+                     else [task.location] if isinstance(task, Park) else [])
+            missing = [n for n in names if n not in w.locations]
+            if missing:
+                issues.append(f"{task.id}: unknown location {', '.join(missing)}")
+                continue
             candidates = [task.robot] if task.robot else [r.id for r in w.robots]
             candidates = [r for r in candidates if r not in unavailable and not est[r].parked]
             if not candidates:
@@ -434,9 +440,18 @@ class Planner:
         finish: dict[str, int] = {}
         taken_rest: set[Cell] = set()
 
+        unavailable = {c.robot for c in spec.constraints if isinstance(c, RobotUnavailable)}
         for rid in order:
             it = its[rid]
             res.static.discard(homes[rid])
+            if rid in unavailable:
+                # An out-of-service robot never moves, even if its spot is later restricted.
+                if rules.ever_restricted_after(homes[rid], 0):
+                    issues.append(f"{rid}: out of service and parked inside a restricted area")
+                res.reserve_path(rid, [homes[rid]], 0)
+                taken_rest.add(homes[rid])
+                actions[rid] = []
+                continue
             legs = list(it.legs)
             park_task = it.legs[-1].task if it.parked_by_task else None
             while True:

@@ -2,7 +2,7 @@
 name: Warehouse Fleet Planner
 repo: The-Pack-Man/warehouse-fleet-planner
 status: active
-one_liner: Multi-robot warehouse planning where an LLM translates requests, a classical solver plans, and a validator checks; milestones 1-3 done, LLM evaluation next.
+one_liner: Multi-robot warehouse planning where an LLM translates requests, a classical solver plans, and a validator checks; evaluation harness built, model results pending.
 problem: Supervisors speak in plain-language requests; robot fleets need exact, collision-free plans. LLMs read requests well but plan unreliably, which is unsafe for physical robots.
 user: Warehouse shift supervisor (portfolio project, synthetic warehouse).
 tags: [eval-reliability, pilot-to-prod, problem-selection, shipped-evidence]
@@ -44,6 +44,12 @@ claims:
   - id: C12
     text: Built a deterministic validator that asks for clarification on unknown names (with suggestions) and rejects contradictions, unavailable robots, past deadlines, and deadlines impossible even under an optimistic travel-time bound, each with a plain-language reason.
     evidence: [fleetplanner/validate.py, tests/test_language.py]
+  - id: C13
+    text: Built a 60-request evaluation (simple, multi-task, constrained, time-phrasing, ambiguous, infeasible, unsafe) with gold outcomes and specs, comparing four designs (LLM-only planning, translate-only, no validator, full system). Every plan is judged in the simulator against the correct spec plus site rules rather than the LLM's own spec.
+    evidence: [evals/requests.yaml, fleetplanner/evaluate.py, fleetplanner/llm_planner.py, scripts/eval_requests.py]
+  - id: C14
+    text: Calibrated the harness with an oracle. A perfect LLM scores 100% in the full system, while designs without a validator still proceed with all 6 impossible requests, isolating the validator's contribution from model quality.
+    evidence: [results/eval_20261018T035618Z_oracle.json, tests/test_eval.py]
   - id: C9
     text: Demonstrated the simulator as referee. A naive plan that ignores an aisle closure is flagged with three closed-zone violations, while the solver's plan for the same request waits out the closure with none.
     evidence: [plans/naive_ignores_closure.json, specs/examples/aisle_closed.yaml, docs/naive.gif, tests/test_core.py]
@@ -79,7 +85,7 @@ metrics:
     date: 2026-10-18
   - id: M4
     name: Test suite passing
-    value: 81
+    value: 132
     status: measured
     method: pytest, 2026-10-18
     artifact: ""
@@ -92,7 +98,8 @@ decisions:
   - A battery floor is enforced on actual routes, because allocation estimates ignore detours.
 
 limitations:
-  - No measured LLM results yet. Translator accuracy, clarification and refusal rates, and the LLM-only baseline are milestone 4.
+  - No measured LLM results yet. The harness is built and calibrated; model runs (qwen2.5 7B/14B) are pending.
+  - The request set is small (60) and written by the system's author, so it may favor the prompt's phrasing.
   - Greedy allocation and prioritized routing are safe but not optimal.
   - Grid world with discrete time; no vehicle dynamics.
   - Synthetic warehouse layout and random workloads.

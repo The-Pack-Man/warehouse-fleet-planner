@@ -8,7 +8,7 @@
 
 See [SPEC.md](SPEC.md) for the problem, user, success metrics, and scope.
 
-> **Status: milestone 3 of 5.** The simulator, classical planner, replay viewer, LLM translator, and validator are done. The LLM-vs-solver evaluation comes next.
+> **Status: milestone 4 of 5 in progress.** Everything is built, including the evaluation harness. Model results (qwen2.5 7B and 14B) are pending a run on a GPU.
 
 ## How it works
 
@@ -94,6 +94,47 @@ The stress test and the examples found five real bugs during development, each f
 - The no-charger battery check ignored the trip home.
 - A robot could finish work inside an aisle just before it closed and be trapped. The planner now only finishes inside a soon-to-close zone if there's time to get out, and otherwise waits for it to reopen. This alone cut route failures from 49 to 9.
 
+## Evaluation: does the design actually help?
+
+[`evals/requests.yaml`](evals/requests.yaml) holds 60 supervisor requests in seven categories, each labeled with the correct response and, for plans, the correct spec:
+
+| Category | n | Correct response |
+|---|---|---|
+| simple, multi, constrained, time | 38 | Plan it exactly as asked |
+| ambiguous | 8 | Ask (missing quantity, unknown aisle or robot, vague destination) |
+| infeasible | 6 | Reject (impossible deadline, contradiction, charger as storage) |
+| unsafe | 8 | Refuse (use the out-of-service robot, ignore or "reopen" the closed aisle) |
+
+Each request runs through four designs:
+
+| Condition | What happens |
+|---|---|
+| `llm_only` | The LLM reads the request and writes every robot's moves itself. It gets the grid, coordinates, rule windows, and movement rules |
+| `translate_only` | LLM → spec → solver. The LLM is told to copy the site rules into its spec; nothing adds them back or checks the spec |
+| `no_validator` | LLM → spec, site rules merged → solver |
+| `full` | LLM → spec, site rules merged → validator → solver |
+
+**Judged against the truth, not the LLM.** Every plan is simulated against the *correct* spec plus the site rules. A wrong deadline, a missing task, or a quietly swapped robot counts against the system even if its own plan looks fine. Reported per condition: overall success, plans executed correctly, spec exactly right, requests with safety violations, stop requests handled, went ahead when it should have stopped, stopped when it should have planned, LLM output errors, and latency.
+
+**Calibration.** With an oracle that returns the correct answer every time ([`results/eval_20261018T035618Z_oracle.json`](results/eval_20261018T035618Z_oracle.json)):
+
+| | llm_only | translate_only | no_validator | full |
+|---|---|---|---|---|
+| Overall success | 100% | 90% | 90% | 100% |
+| Requests with safety violations | 0 | 1 | 1 | 0 |
+
+Even with a perfect LLM, the two designs without a validator go ahead with all 6 impossible requests, and one of those runs breaks a rule. That's the validator's floor contribution. Everything a real model loses beyond this is the cost of the model.
+
+```bash
+python scripts/eval_requests.py --oracle                          # self-check, no LLM needed
+python scripts/eval_requests.py --models qwen2.5:7b --limit 5     # quick smoke test
+python scripts/eval_requests.py --models qwen2.5:7b,qwen2.5:14b   # full run, ~60 requests × 3 LLM calls each
+```
+
+Each run writes `results/eval_<timestamp>_<model>.json` with every request's outputs, spec differences, simulator verdict, and a summary.
+
+**Model results:** pending.
+
 ## Quick start
 
 ```bash
@@ -137,7 +178,7 @@ If you see "doesn't have the model" even though `ollama list` shows it, a second
 
 Use `--model qwen2.5:14b` for a larger model, `--show-spec` to see what the LLM produced, and `--json out.json` to save the full trace. `--base-url` and `--model` point at any OpenAI-compatible endpoint.
 
-These are the planned behaviors. Measuring how often a given model actually gets them right is milestone 4.
+These are the intended behaviors. How often a model actually achieves them is what the evaluation below measures.
 
 To record a GIF of a replay: `pip install -e ".[gif]" && playwright install chromium`, then `python scripts/record_gif.py runs/busy_shift.json docs/demo.gif`.
 
@@ -165,5 +206,5 @@ The run log (`--out`) holds every frame, event, violation, and task result. The 
 1. ~~World, simulator, solver~~
 2. ~~Replay viewer~~
 3. ~~LLM translator and validator~~
-4. Evaluation suite: ~60 requests with gold outcomes. Ablations: LLM-only planning, no validator, full system, model size
+4. Evaluation: ~~60-request suite, four-condition harness, oracle calibration~~; model runs (7B, 14B) pending
 5. Write-up with results and failure analysis
