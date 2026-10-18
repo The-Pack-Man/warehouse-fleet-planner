@@ -1,6 +1,7 @@
 """
 python -m fleetplanner run MAP SPEC [--plan PLAN.json] [--out run.json] [--html run.html] [--open]
 python -m fleetplanner view RUN.json [--html run.html] [--open]
+python -m fleetplanner ask MAP "request" [--rules RULES.yaml] [--model M] [--html run.html] [--open]
 
 `run` plans a MissionSpec with the classical solver (or replays a given plan)
 and simulates it. `view` turns a run log into a standalone replay page.
@@ -30,6 +31,30 @@ def _html(log: dict, html: str | None, open_it: bool, name: str) -> None:
         webbrowser.open(path.resolve().as_uri())
 
 
+def _ask(args) -> None:
+    from .pipeline import handle_request
+    from .translate import load_rules, openai_chat
+
+    world = World.load(args.map)
+    standing = load_rules(yaml.safe_load(Path(args.rules).read_text())) if args.rules else []
+    chat = openai_chat(model=args.model, base_url=args.base_url)
+    out = handle_request(world, args.request, chat, standing)
+    label = {"planned": "Planned", "clarify": "Needs clarification", "refuse": "Refused",
+             "reject": "Rejected", "error": "Error"}[out["status"]]
+    print(f"{label} ({out['model']}, {out['translator']['attempts']} attempt(s), {out['translator']['latency_s']:.1f}s)")
+    print(out["message"])
+    for note in out.get("notes", []):
+        print(f"  note: {note}")
+    if args.show_spec and out.get("spec"):
+        print(yaml.safe_dump(out["spec"], sort_keys=False))
+    if args.json:
+        Path(args.json).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.json).write_text(json.dumps(out, indent=1, default=str))
+        print(f"wrote {args.json}")
+    if out.get("log"):
+        _html(out["log"], args.html, args.open, "request")
+
+
 def main() -> None:
     p = argparse.ArgumentParser(prog="fleetplanner")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -40,11 +65,25 @@ def main() -> None:
     run.add_argument("--out", help="write the run log (JSON) here")
     run.add_argument("--html", help="write a standalone replay page here")
     run.add_argument("--open", action="store_true", help="open the replay page in a browser")
+    ask = sub.add_parser("ask", help="plain-language request -> LLM -> validator -> planner -> simulator")
+    ask.add_argument("map")
+    ask.add_argument("request")
+    ask.add_argument("--rules", help="YAML list of standing site rules")
+    ask.add_argument("--model", help="model name (default: $LLM_MODEL or qwen2.5:7b)")
+    ask.add_argument("--base-url", help="OpenAI-compatible endpoint (default: $LLM_BASE_URL or local Ollama)")
+    ask.add_argument("--json", help="write the full outcome (translation, validation, run log) here")
+    ask.add_argument("--html", help="write a replay page here if a plan was made")
+    ask.add_argument("--open", action="store_true")
+    ask.add_argument("--show-spec", action="store_true", help="print the spec the LLM produced")
     view = sub.add_parser("view", help="turn a run log into a standalone replay page")
     view.add_argument("log")
     view.add_argument("--html", help="output path (default: next to the log)")
     view.add_argument("--open", action="store_true")
     args = p.parse_args()
+
+    if args.cmd == "ask":
+        _ask(args)
+        return
 
     if args.cmd == "view":
         log = json.loads(Path(args.log).read_text())

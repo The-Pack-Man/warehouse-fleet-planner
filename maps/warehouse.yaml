@@ -69,3 +69,42 @@ battery:
   idle_cost: 0.05         # % per wait step
   charge_rate: 5.0        # % per step at a charger
   reserve: 20             # planner keeps at least this much
+
+# Plain-language context for the language layer. The planner ignores these.
+descriptions:
+  A1-1: aisle 1, north slot
+  A1-2: aisle 1, south slot
+  A2-1: aisle 2, north slot
+  A2-2: aisle 2, south slot
+  A3-1: aisle 3, north slot
+  A3-2: aisle 3, south slot
+  A4-1: aisle 4, north slot
+  A4-2: aisle 4, south slot
+  A5-1: aisle 5, north slot
+  A5-2: aisle 5, south slot
+  pick_1: pick station 1 (south-west)
+  pick_2: pick station 2 (south, center)
+  pick_3: pick station 3 (south-east)
+  dock: inbound dock (north-east), where new stock arrives
+  charger_1: charger 1 (west lane)
+  charger_2: charger 2 (west lane)
+  charger_3: charger 3 (west lane)
+  home_1: R1's parking spot
+  home_2: R2's parking spot
+  home_3: R3's parking spot
+  home_4: R4's parking spot
+  aisle_1: aisle 1 (one lane)
+  aisle_2: aisle 2 (one lane)
+  aisle_3: aisle 3 (one lane)
+  aisle_4: aisle 4 (one lane)
+  aisle_5: aisle 5 (one lane)
+  charging_bay: the charging lane on the west wall, chargers 1-3
+  east_lane: the lane along the east wall
+  north_corridor: the corridor along the north side, including the dock
+  south_corridor: the corridor along the south side, including the pick stations and robot parking
+  dock_area: the area around the inbound dock
+
+conventions:
+  - Restocking moves totes from the dock to an aisle slot. Picking moves totes from an aisle slot to a pick station.
+  - When a request names an aisle but not a slot, use the aisle's north slot (-1).
+  - Each robot carries up to 2 totes per trip; larger quantities take several trips.

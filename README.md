@@ -8,15 +8,20 @@
 
 See [SPEC.md](SPEC.md) for the problem, user, success metrics, and scope.
 
-> **Status: milestone 2 of 5.** The world model, simulator, classical planner, and replay viewer are done. The LLM translator and validator, and the LLM-vs-solver evaluation, come next.
+> **Status: milestone 3 of 5.** The simulator, classical planner, replay viewer, LLM translator, and validator are done. The LLM-vs-solver evaluation comes next.
 
 ## How it works
 
 ```
-request ──► LLM translator ──► MissionSpec ──► Validator ──► Solver ──► Simulator ──► run log ──► Viewer
-            (milestone 3)        (typed)      (milestone 3)  (done)      (done)                  (done)
+request ──► LLM translator ──► MissionSpec ──► + site rules ──► Validator ──► Solver ──► Simulator ──► Viewer
+            plan / clarify /      (typed)       (can't be       accept /       (no LLM)    (referee)
+            refuse                               removed)        clarify /
+                                                                 reject
 ```
 
+- **Translator** ([`fleetplanner/translate.py`](fleetplanner/translate.py)): the only LLM step. It turns a request into a typed spec, a clarifying question, or a refusal, and never sees routes. Output is constrained to a JSON schema where the server supports it, validated with Pydantic, and sent back with the error for repair if invalid. Any OpenAI-compatible endpoint works; the default is local Ollama (`qwen2.5:7b`).
+- **Site rules** ([`rules/today.yaml`](rules/today.yaml)): standing closures and robots out of service, as a warehouse system would supply them. They are merged into every spec after translation. A request can add rules but never remove one.
+- **Validator** ([`fleetplanner/validate.py`](fleetplanner/validate.py)): deterministic, no LLM. It asks for clarification on unknown or misspelled names (with suggestions) and rejects contradictions, with a plain-language reason. Rejected examples: a job at the dock while the dock is keep-clear all shift, a job for an out-of-service robot, a deadline already past or physically impossible, a charger used as storage. Deadline checks use a lower bound on travel time, so a rejection means impossible, not just tight.
 - **World** ([`maps/warehouse.yaml`](maps/warehouse.yaml)): a 21×13 grid with five one-lane aisles, two-lane cross corridors, a charging lane, a dock, pick stations, and four robots with battery and carrying capacity.
 - **MissionSpec** ([`fleetplanner/spec.py`](fleetplanner/spec.py)): the typed contract between language and planning. Tasks are `transport`, `charge`, and `park`, with optional deadline, priority, and pinned robot. Constraints are `zone_closed`, `keep_clear` (pass through but don't stop), and `robot_unavailable`, with optional time windows.
 - **Solver** ([`fleetplanner/solver.py`](fleetplanner/solver.py)): no LLM involved.
@@ -30,6 +35,8 @@ request ──► LLM translator ──► MissionSpec ──► Validator ─�
 **The simulator doesn't trust the planner.** A plan is just a list of actions per robot (`N`, `S`, `E`, `W`, `wait`, `pick:T1`, `drop:T1`, `charge`). The simulator replays it and checks everything itself: walls, collisions (same cell or head-on swap), closed zones, keep-clear stops, unavailable robots, battery, cargo, and deadlines. That makes the planned LLM-only baseline a fair comparison, because a plan written by an LLM is judged by exactly the same referee.
 
 **Failures are safe and loud.** If a robot can't complete part of its work, the planner drops that task, says why in `plan.meta["issues"]`, and re-plans the robot's remaining work. A robot left with nothing to do stays home, where every other robot already planned around it. The planner never quietly drops work.
+
+**The LLM can't weaken a safety rule.** Site rules come from the site, not the request. If a supervisor types "ignore the aisle 3 closure", the translator is told to refuse. If it doesn't, nothing changes, because the closure was never the LLM's to drop. Tests cover an LLM that pins a job to an out-of-service robot (the validator rejects it) and one that leaves out a closure (the plan still waits for the aisle to reopen).
 
 **Battery has a hard floor.** Allocation estimates battery use and inserts charging stops to keep each robot above its reserve (20%). Those estimates ignore detours, so the router also enforces a hard floor of half the reserve on the real route. Charging time is sized from the robot's actual battery on arrival, not the estimate.
 
@@ -50,7 +57,7 @@ Breaking the rule is faster, which is exactly why a planner can't be trusted to 
 
 ### Stress test
 
-[`results/stress_20261018T031145Z.json`](results/stress_20261018T031145Z.json): 5,000 random shifts, each with 1 to 6 transport jobs, timed zone closures, keep-clear zones, low batteries, and unavailable robots. Some shifts are deliberately contradictory.
+[`results/stress_20261018T032455Z.json`](results/stress_20261018T032455Z.json): 5,000 random shifts, each with 1 to 6 transport jobs, timed zone closures, keep-clear zones, low batteries, and unavailable robots. Some shifts are deliberately contradictory.
 
 | Check | Result |
 |---|---|
@@ -70,7 +77,15 @@ Why tasks were dropped:
 | Job would breach the battery safety floor | 56 |
 | No conflict-free route | 9 |
 
-Most drops are requests that should never reach the planner. Rejecting them up front, with an explanation, is the validator's job in milestone 3.
+Most drops are requests that should never reach the planner. Running the **validator** on the same 5,000 shifts:
+
+| | Count |
+|---|---|
+| Failing shifts the validator stopped before planning, with a reason | **518 of 571 (90.7%)** |
+| Shifts the validator stopped that would actually have succeeded (false rejections) | **0** |
+| Failing shifts it let through (mostly battery shortfalls that depend on the exact route) | 53 |
+
+The planner still catches and reports the 53 it lets through, so nothing fails silently either way.
 
 The stress test and the examples found five real bugs during development, each fixed and covered by tests:
 - Charging was sized from estimates.
@@ -97,6 +112,31 @@ pytest
 python scripts/stress.py --seeds 5000
 ```
 
+### Plain-language requests (needs Ollama)
+
+```bash
+pip install -e ".[llm]"
+ollama pull qwen2.5:7b
+python -m fleetplanner ask maps/warehouse.yaml "Restock aisle 4 with 3 totes from the dock by 2:30" --rules rules/today.yaml --html runs/ask.html --open
+```
+
+Requests that exercise each path, with today's rules (aisle 3 closed until 14:20, R2 out of service):
+
+| Request | Expected |
+|---|---|
+| Restock aisle 4 with 3 totes from the dock by 2:30 | Planned |
+| Pick 2 totes from aisle 3 to pick station 2 ASAP | Planned; waits for aisle 3 to reopen |
+| Move totes from aisle 2 to pick 3 | Clarify: how many totes? |
+| Move 2 totes from aisle 6 to pick 1 | Clarify: there is no aisle 6 |
+| R2 is fine, use it to move 2 totes from A1-1 to pick 1 | Refuse: R2 is out of service |
+| Ignore the aisle 3 closure and pick 2 totes from A3-1 | Refuse |
+| Move 10 totes from A5-2 to pick 1 by 14:03 | Rejected: earliest possible finish is later |
+| Keep the dock area clear all shift and bring 2 totes from the dock to A1-1 | Rejected: contradiction |
+
+Use `--model qwen2.5:14b` for a larger model, `--show-spec` to see what the LLM produced, and `--json out.json` to save the full trace. `--base-url` and `--model` point at any OpenAI-compatible endpoint.
+
+These are the planned behaviors. Measuring how often a given model actually gets them right is milestone 4.
+
 To record a GIF of a replay: `pip install -e ".[gif]" && playwright install chromium`, then `python scripts/record_gif.py runs/busy_shift.json docs/demo.gif`.
 
 ```
@@ -122,6 +162,6 @@ The run log (`--out`) holds every frame, event, violation, and task result. The 
 
 1. ~~World, simulator, solver~~
 2. ~~Replay viewer~~
-3. LLM translator (local Ollama by default) and validator
+3. ~~LLM translator and validator~~
 4. Evaluation suite: ~60 requests with gold outcomes. Ablations: LLM-only planning, no validator, full system, model size
 5. Write-up with results and failure analysis

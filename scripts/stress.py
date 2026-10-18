@@ -30,6 +30,7 @@ sys.path.insert(0, str(ROOT))
 
 from fleetplanner import Planner, World, simulate  # noqa: E402
 from fleetplanner.scenarios import random_spec  # noqa: E402
+from fleetplanner.validate import validate  # noqa: E402
 
 SAFETY = {"collision", "invalid_move", "closed_zone", "keep_clear", "unavailable_robot_used", "battery_depleted"}
 
@@ -62,8 +63,10 @@ def main() -> None:
     unsafe_kinds, reasons = Counter(), Counter()
     unsafe_seeds, silent_seeds = [], []
     min_battery = 100.0
+    gate = Counter()
     for seed in range(args.first_seed, args.first_seed + args.seeds):
         spec = random_spec(world, random.Random(seed))
+        verdict = validate(world, spec).status
         plan = Planner(world).plan(spec)
         log = simulate(world, spec, plan)
         unsafe = [v for v in log["violations"] if v["kind"] in SAFETY]
@@ -83,6 +86,9 @@ def main() -> None:
             silent_seeds.append(seed)
         for i in plan.meta["issues"]:
             reasons[classify(i)] += 1
+        # Would the validator have stopped this shift before planning, and was it right to?
+        failed = bool(unfinished) or bool(unsafe)
+        gate[f"{'stopped' if verdict != 'accept' else 'passed'}_{'failing' if failed else 'clean'}"] += 1
         min_battery = min(min_battery, min(f[r][2] for f in log["frames"] for r in f))
 
     summary = {
@@ -95,6 +101,14 @@ def main() -> None:
         "lowest_battery_seen": round(min_battery, 2),
         "unsafe_violation_kinds": dict(unsafe_kinds),
         "drop_reasons": dict(reasons.most_common()),
+        "validator": {
+            "stopped_shifts_that_would_fail": gate["stopped_failing"],
+            "stopped_shifts_that_would_succeed": gate["stopped_clean"],
+            "passed_shifts_that_still_fail": gate["passed_failing"],
+            "passed_shifts_clean": gate["passed_clean"],
+            "share_of_failing_shifts_caught": round(
+                gate["stopped_failing"] / max(1, gate["stopped_failing"] + gate["passed_failing"]), 4),
+        },
     }
     print(json.dumps(summary, indent=2))
     out = Path(args.out)

@@ -1,0 +1,4 @@
+# Standing site rules for the shift, as a warehouse system would supply them.
+# Requests can add rules but never remove these.
+- {type: zone_closed, zone: aisle_3, start: "14:00", end: "14:20"}   # spill cleanup
+- {type: robot_unavailable, robot: R2}                              # scheduled maintenance

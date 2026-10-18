@@ -41,6 +41,8 @@ class World:
     start_time: str = "00:00"
     step_seconds: int = 10
     grid_text: str = field(default="", repr=False)
+    descriptions: dict[str, str] = field(default_factory=dict)
+    conventions: list[str] = field(default_factory=list)
 
     # ── construction ───────────────────────────────────────────────────────
     @classmethod
@@ -69,6 +71,8 @@ class World:
             start_time=data.get("start_time", "00:00"),
             step_seconds=data.get("step_seconds", 10),
             grid_text="\n".join(rows),
+            descriptions=data.get("descriptions", {}),
+            conventions=data.get("conventions", []),
         )
         world.check()
         return world
@@ -80,6 +84,9 @@ class World:
         for r in self.robots:
             if r.home not in self.locations:
                 raise ValueError(f"robot {r.id} home {r.home!r} is not a location")
+        for name in self.descriptions:
+            if name not in self.locations and name not in self.zones:
+                raise ValueError(f"description for unknown location or zone {name!r}")
         homes = [r.home for r in self.robots]
         if len(set(homes)) != len(homes):
             raise ValueError("robots must have distinct homes")
@@ -143,6 +150,12 @@ class World:
         sh, sm = map(int, self.start_time.split(":"))
         total = sh * 3600 + sm * 60 + step * self.step_seconds
         return f"{total // 3600 % 24:02d}:{total // 60 % 60:02d}:{total % 60:02d}"
+
+    @property
+    def end_time(self) -> str:
+        """Nominal end of the planning horizon used for validation (two hours after start)."""
+        h, m = map(int, self.start_time.split(":"))
+        return f"{(h + 2) % 24:02d}:{m:02d}"
 
     def summary(self) -> dict:
         """JSON-friendly description, used in run logs and LLM prompts."""

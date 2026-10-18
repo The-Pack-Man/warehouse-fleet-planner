@@ -223,7 +223,8 @@ function load(log, name) {
   out.textContent = m.success ? "All tasks done, no violations"
     : `${m.tasks_on_time}/${m.tasks_total} tasks on time, ${m.violation_count} violation${m.violation_count === 1 ? "" : "s"}`;
   const planner = log.plan.meta?.planner || "unknown planner";
-  $("summary").textContent = `${log.spec.tasks.length} tasks, ${log.world.robots.length} robots, planned by ${planner}. ` +
+  $("summary").textContent = (log.request ? `“${log.request}” ` : "") +
+    `${log.spec.tasks.length} tasks, ${log.world.robots.length} robots, planned by ${planner}. ` +
     `Shift runs ${hhmm(log.world, 0)}–${hhmm(log.world, S.d.last)}.`;
   $("scrub").max = S.d.last;
   renderIssues(); resize(); drawTicks(); render();
