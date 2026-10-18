@@ -1,5 +1,5 @@
 {
- "created_at": "2026-10-18T04:51:11.807556+00:00",
+ "created_at": "2026-10-18T21:21:32.191428+00:00",
  "source": "eval_20261018T042518Z_qwen2.5-7b.json",
  "model": "qwen2.5:7b",
  "note": "Saved LLM outputs replayed with and without grounding; no model was called.",

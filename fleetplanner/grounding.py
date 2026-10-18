@@ -130,6 +130,27 @@ def mentioned_robots(text: str) -> set[str]:
     return set(re.findall(r"\b(R\d+)\b", text))
 
 
+DOWN_PHRASES = (r"going down|goes down|down for|is down|out of service|offline|off line|under maintenance|"
+                r"in maintenance|for maintenance|to maintenance|in for repairs?|for repairs?|broken|unavailable|"
+                r"not available|out today|out for the|being serviced|needs service")
+NOT_DOWN = re.compile(r"\b(back from|back online|back in service|is back|fixed|repaired|returned from|no longer)\b")
+
+
+def robots_said_down(text: str) -> set[str]:
+    """Robots the request itself describes as unavailable ("R4 is going down for maintenance")."""
+    down = set()
+    for clause in re.split(r"[.;,!?]|\band\b|\bbut\b|\bso\b", text):
+        c = clause.lower()
+        if NOT_DOWN.search(c):
+            continue
+        robots = re.findall(r"\b(r\d+)\b", c)
+        if robots and re.search(r"\b(?:" + DOWN_PHRASES + r")\b", c) or \
+                robots and re.search(r"\b(?:take|pull|send)\s+r\d+\s+(?:offline|out of service|down|for maintenance|"
+                                     r"to maintenance)", c):
+            down |= {r.upper() for r in robots}
+    return down
+
+
 def stated_numbers(text: str, world: World) -> list[int]:
     """Quantities stated in the request, after removing names, times, and robots that contain digits."""
     t = text.lower()
@@ -171,12 +192,15 @@ def ground(world: World, request: str, spec: MissionSpec, standing: list[Any]) -
                          f"The request asks to set aside a site rule (\"{m.group(1)}\"). Site rules can only be changed "
                          "by a site lead, not from a request.")
 
-    # 2. Robots.
+    # 2. Robots. A robot can be mentioned as the one to use ("have R1 bring...") or as
+    # context ("R4 is going down for maintenance"). Only the first is a request to use it.
     out_of_service = {c.robot for c in standing if isinstance(c, RobotUnavailable)}
     named = mentioned_robots(text)
     fleet = {r.id for r in world.robots}
-    if named & out_of_service:
-        r = sorted(named & out_of_service)[0]
+    said_down = robots_said_down(text)
+    asked_to_use = (named & out_of_service) - said_down
+    if asked_to_use:
+        r = sorted(asked_to_use)[0]
         return Grounding("refuse", None, notes, f"{r} is out of service under a site rule, so it can't be used.")
     unknown = named - fleet
     if unknown:
@@ -185,11 +209,17 @@ def ground(world: World, request: str, spec: MissionSpec, standing: list[Any]) -
     tasks = [t.model_copy() for t in spec.tasks]
     constraints = list(spec.constraints)
     declared_down = {c.robot for c in constraints if isinstance(c, RobotUnavailable)}
+    for r in sorted((said_down & fleet) - declared_down - out_of_service):
+        constraints.append(RobotUnavailable(robot=r))
+        declared_down.add(r)
+        notes.append(f"The request says {r} is unavailable, so I marked it out of service.")
+    unavailable = declared_down | out_of_service
     for i, t in enumerate(tasks):
-        if t.robot and t.robot not in named:
-            notes.append(f"{t.id}: the request didn't name a robot, so I let the planner choose instead of {t.robot}.")
+        if t.robot and (t.robot not in named or t.robot in unavailable):
+            why = "is unavailable" if t.robot in unavailable else "wasn't named in the request"
+            notes.append(f"{t.id}: {t.robot} {why}, so I let the planner choose.")
             tasks[i] = t.model_copy(update={"robot": None})
-    for r in sorted(named - declared_down):
+    for r in sorted(named - unavailable):
         if any(t.robot == r for t in tasks):
             continue
         free = [i for i, t in enumerate(tasks) if t.robot is None]

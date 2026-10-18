@@ -2,7 +2,7 @@
 name: Warehouse Fleet Planner
 repo: The-Pack-Man/warehouse-fleet-planner
 status: active
-one_liner: Multi-robot warehouse planning where an LLM translates, deterministic checks ground and validate, and a classical solver plans; measured against LLM-only planning.
+one_liner: Multi-robot warehouse planning where an LLM translates, deterministic checks ground and validate, and a classical solver plans; 85-90% vs 5-15% for LLM-only planning on held-out requests, zero safety violations.
 problem: Supervisors speak in plain-language requests; robot fleets need exact, collision-free plans. LLMs read requests well but plan unreliably, which is unsafe for physical robots.
 user: Warehouse shift supervisor (portfolio project, synthetic warehouse).
 tags: [eval-reliability, pilot-to-prod, problem-selection, shipped-evidence]
@@ -55,7 +55,10 @@ claims:
     evidence: [fleetplanner/grounding.py, tests/test_grounding.py]
   - id: C16
     text: Measured the fix without re-running the model by replaying the saved LLM outputs with and without grounding, and checked for over-fitting (no false positives on all 51 correct specs; a held-out set committed before the fix).
-    evidence: [scripts/replay_grounding.py, results/replay_grounding_qwen2.5-7b.json, results/replay_grounding_qwen2.5-14b.json, evals/holdout.yaml]
+    evidence: [scripts/replay_grounding.py, results/replay_grounding_20261018T042518Z_qwen2.5-7b.json, results/replay_grounding_20261018T044209Z_qwen2.5-14b.json, evals/holdout.yaml]
+  - id: C17
+    text: Caught and fixed a safety regression introduced by my own grounding check (it assigned a job to a robot the request said was going down). Added a regression test from the model's exact output and a property test over all 80 requests, and showed via offline replay of six saved runs that the fix changes exactly that one outcome.
+    evidence: [fleetplanner/grounding.py, tests/test_grounding.py, results/replay_grounding_20261018T211125Z_qwen2.5-7b.json]
   - id: C9
     text: Demonstrated the simulator as referee. A naive plan that ignores an aisle closure is flagged with three closed-zone violations, while the solver's plan for the same request waits out the closure with none.
     evidence: [plans/naive_ignores_closure.json, specs/examples/aisle_closed.yaml, docs/naive.gif, tests/test_core.py]
@@ -121,12 +124,26 @@ metrics:
     name: Grounding check on the same saved outputs, full -> grounded success (7B / 14B)
     value: "78% -> 92% / 95% -> 98%; went-ahead-when-it-should-stop 6 -> 0 / 2 -> 0; 0 requests made worse"
     status: measured
-    method: scripts/replay_grounding.py on the milestone 4 results (no model re-run); dev set, so optimistic until the held-out run
-    artifact: results/replay_grounding_qwen2.5-7b.json
+    method: scripts/replay_grounding.py on the milestone 4 results (no model re-run); dev set, so optimistic
+    artifact: results/replay_grounding_20261018T042518Z_qwen2.5-7b.json
+    date: 2026-10-18
+  - id: M11
+    name: Held-out success (20 requests written before the fix), full system with grounding vs LLM-only planning (7B / 14B)
+    value: "85% vs 15% / 90% vs 5%; safety violations 0 vs 2 / 0 vs 8"
+    status: measured
+    method: scripts/eval_requests.py --requests evals/holdout.yaml, prompt v2, temperature 0, single run
+    artifact: results/eval_20261018T210328Z_holdout_qwen2.5-7b.json
+    date: 2026-10-18
+  - id: M12
+    name: Held-out effect of the grounding check alone (same translations, full -> grounded)
+    value: "7B 70% -> 85% (3 fixed, 0 broken); 14B 90% -> 90% (no change)"
+    status: measured
+    method: same runs as M11
+    artifact: results/eval_20261018T210939Z_holdout_qwen2.5-14b.json
     date: 2026-10-18
   - id: M4
     name: Test suite passing
-    value: 221
+    value: 304
     status: measured
     method: pytest, 2026-10-18
     artifact: ""
@@ -141,7 +158,9 @@ decisions:
 
 limitations:
   - Each condition run once at temperature 0; Ollama is not fully deterministic, so differences of a request or two are noise.
-  - Grounding gains were measured on the set its rules were designed against; the held-out run is pending.
+  - Held-out failures remain (all safe): an implied rule override planned instead of refused (h18), an over-cautious refusal (h02), refusing instead of asking about unknown names on 7B (h13, h14).
+  - Prompt v2 introduced an over-refusal on 7B for requests that add a closure (c03, c10).
+  - The held-out set has now been used; measuring further fixes needs a new one.
   - The request set is small (60) and written by the system's author, so it may favor the prompt's phrasing.
   - Greedy allocation and prioritized routing are safe but not optimal.
   - Grid world with discrete time; no vehicle dynamics.

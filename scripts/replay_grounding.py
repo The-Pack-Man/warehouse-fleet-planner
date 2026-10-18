@@ -35,7 +35,8 @@ for name in sys.argv[1:]:
         tr = TranslateResult(t, row.get("attempts", 1), row.get("latency_s") or 0.0, [], row.get("llm_errors", []))
         rows += [run_translated(world, req, standing, tr, "full"), run_translated(world, req, standing, tr, "grounded")]
     s = summarize(rows)
-    out = ROOT / "results" / f"replay_grounding_{re.sub(r'[^A-Za-z0-9.-]+', '-', data['model'])}.json"
+    src = Path(name).stem.replace("eval_", "")
+    out = ROOT / "results" / f"replay_grounding_{src}.json"
     out.write_text(json.dumps({"created_at": datetime.now(timezone.utc).isoformat(), "source": Path(name).name,
                                "model": data["model"], "note": "Saved LLM outputs replayed with and without grounding; "
                                "no model was called.", "summary": s, "rows": rows}, indent=1, default=str))
@@ -45,6 +46,13 @@ for name in sys.argv[1:]:
         print(f"  {k:34s} full={str(s['full'][k]):>8s}   grounded={str(s['grounded'][k]):>8s}")
     print("  by category:", {c: (s['full']['by_category'][c], s['grounded']['by_category'][c]) for c in s['full']['by_category']})
     full = {r["id"]: r for r in rows if r["condition"] == "full"}
+    recorded = {r["id"]: r for r in data["rows"] if r["condition"] == "grounded"}
+    if recorded:
+        changed = [(i, recorded[i]["success"], r["success"], recorded[i]["unsafe"], r["unsafe"])
+                   for r in rows if r["condition"] == "grounded" for i in [r["id"]]
+                   if (recorded[i]["success"], recorded[i]["unsafe"]) != (r["success"], r["unsafe"])]
+        print(f"  vs grounding as recorded in the run: {len(changed)} changed " +
+              ", ".join(f"{i} (success {a}->{b}, unsafe {c}->{d})" for i, a, b, c, d in changed))
     for r in rows:
         if r["condition"] == "grounded" and r["success"] != full[r["id"]]["success"]:
             arrow = "fixed " if r["success"] else "BROKE "

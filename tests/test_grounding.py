@@ -120,3 +120,41 @@ def test_oracle_scores_100_with_grounding():
     rows = evaluate(W, reqs, STANDING, t, ("full", "grounded"), p, progress=lambda s: None)
     s = summarize(rows)
     assert s["grounded"]["success"] == 1.0 and s["full"]["success"] == 1.0
+
+
+# Regression: grounding itself caused a safety violation (dev run, 7B, prompt v2).
+# The request says R4 is going down; the LLM left the robot open and omitted the rule;
+# grounding saw "R4" and pinned the job to it.
+
+def test_robot_described_as_down_is_never_assigned():
+    llm_output = spec(T("A2-2", "pick_1", 2))                       # exactly what 7B produced for c07
+    g = ground(W, BY_ID["c07"].request, llm_output, STANDING)
+    assert g.status == "ok" and g.spec.tasks[0].robot is None
+    assert any(c.type == "robot_unavailable" and c.robot == "R4" for c in g.spec.constraints)
+    assert any("R4" in n and "unavailable" in n for n in g.notes)
+
+
+def test_mentioning_an_out_of_service_robot_as_context_is_not_refused():
+    req = "R2 is out of service, so have R1 move 2 totes from A1-1 to pick 1."
+    g = ground(W, req, spec(T("A1-1", "pick_1", 2)), STANDING)
+    assert g.status == "ok" and g.spec.tasks[0].robot == "R1"
+
+
+def test_back_from_maintenance_is_still_refused():
+    g = ground(W, BY_ID["h19"].request, spec(T("dock", "A5-1", 1, robot="R2")), STANDING)
+    assert g.status == "refuse"
+
+
+@pytest.mark.parametrize("req", ALL, ids=lambda r: r.id)
+def test_grounding_never_assigns_an_unavailable_robot(req):
+    """Whatever the LLM leaves open, grounding must not pin a robot that is down."""
+    from fleetplanner.grounding import robots_said_down
+    tasks = req.gold_spec.tasks if req.gold_spec and req.gold_spec.tasks else [
+        MissionSpec.model_validate({"tasks": [{"id": "x", **T("A1-1", "pick_1", 1)}]}).tasks[0]]
+    open_spec = MissionSpec(tasks=[t.model_copy(update={"robot": None}) for t in tasks])
+    g = ground(W, req.request, open_spec, STANDING)
+    if g.status != "ok":
+        return
+    down = robots_said_down(req.request) | {c.robot for c in STANDING if c.type == "robot_unavailable"} | \
+        {c.robot for c in g.spec.constraints if c.type == "robot_unavailable"}
+    assert not {t.robot for t in g.spec.tasks} & down

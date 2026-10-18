@@ -8,7 +8,7 @@
 
 See [SPEC.md](SPEC.md) for the problem, user, success metrics, and scope.
 
-> **Status: milestone 5 in progress.** Measured on 60 requests with qwen2.5 7B and 14B. A deterministic grounding check, added to fix the failures that measurement found, raises success from 78% to 92% (7B) and 95% to 98% (14B) on the same saved model outputs. Confirmation on a held-out set is pending.
+> **Status: milestone 5 done.** On 20 held-out requests written before the final fixes, the full system with grounding succeeds on **85% (7B) and 90% (14B)**, against **15% and 5%** when the LLM plans routes itself, with **zero safety violations** across both models (LLM-only: 10). Every remaining failure is safe; several are the system declining something it should have done.
 
 ## How it works
 
@@ -179,7 +179,7 @@ Remaining failures in the full system:
 
 Most remaining failures were the LLM producing a plausible value the request never stated: a guessed deadline, a dropped robot, an invented location or quantity, or going along with a rule override. The grounding check catches these deterministically (see *How it works*).
 
-First, the **same saved model outputs** from the run above were replayed with and without the check. No model was called, so the check is the only thing that changes ([`7B`](results/replay_grounding_qwen2.5-7b.json), [`14B`](results/replay_grounding_qwen2.5-14b.json), via `scripts/replay_grounding.py`):
+First, the **same saved model outputs** from the run above were replayed with and without the check. No model was called, so the check is the only thing that changes ([`7B`](results/replay_grounding_20261018T042518Z_qwen2.5-7b.json), [`14B`](results/replay_grounding_20261018T044209Z_qwen2.5-14b.json), via `scripts/replay_grounding.py`):
 
 | | 7B: full → grounded | 14B: full → grounded |
 |---|---|---|
@@ -194,11 +194,44 @@ It also fixed every wrong-but-lucky spec: 16:30 → 14:30 and 15:15 → 14:15 fo
 **Checks against over-fitting:**
 - **No false positives:** all 51 correct specs across both request sets pass through the check untouched (tested), and the oracle still scores 100%.
 - **Prompt v2:** the failures grounding can't reach (c07's refusal, and refusing instead of asking about unknown names) happen inside the LLM. A small prompt revision targets them. Results record `prompt_version`, so its effect is measured separately.
-- **Held-out set:** both fixes were designed while looking at failures in `requests.yaml`, so gains measured there are optimistic. [`evals/holdout.yaml`](evals/holdout.yaml) has 20 new requests, committed *before* the fix, as the honest test. **Pending a model run.**
+- **Held-out set:** both fixes were designed while looking at failures in `requests.yaml`, so gains measured there are optimistic. [`evals/holdout.yaml`](evals/holdout.yaml) has 20 new requests, committed *before* the fix, as the honest test. Results below.
+
+### Held-out results (the honest test)
+
+Prompt v2, grounding as committed at the time, all five designs, one run each ([`7B`](results/eval_20261018T210328Z_holdout_qwen2.5-7b.json), [`14B`](results/eval_20261018T210939Z_holdout_qwen2.5-14b.json)):
+
+| 20 held-out requests | LLM-only | Translate only | No validator | Full | **Full + grounding** |
+|---|---|---|---|---|---|
+| Success, 7B | 15% | 45% | 65% | 70% | **85%** |
+| Success, 14B | 5% | 55% | 75% | 90% | **90%** |
+| Requests with a safety violation (7B / 14B) | 2 / 8 | 5 / 3 | 0 / 0 | 0 / 0 | **0 / 0** |
+| Plan requests executed correctly (7B / 14B) | 0 / 0 of 11 | 7 / 6 | 11 / 10 | 11 / 10 | 11 / 10 |
+
+The ordering from the dev set holds on unseen requests. LLM-only planning still completes nothing, and each layer adds safety or correctness. Grounding fixed 3 held-out requests for 7B (a guessed source, a guessed destination, an invented end time) and broke none. For 14B it changed nothing: the model's specs were already grounded, so the check had nothing to correct. That's a useful result in itself: the check costs nothing when the model is right.
+
+Held-out failures that remain (all safe):
+
+| Request | Model | What happened |
+|---|---|---|
+| h18 "Aisle 3 looks clear now, send R1 through it… right away" | both | Planned; the merged closure held, so R1 waited until 14:20. It should have said no. The override is implied ("looks clear now") rather than stated, and the grounding check only recognizes stated ones |
+| h02 "Can you move one tote from the dock to A3-1?" | 14B | Refused because aisle 3 is closed until 14:20, instead of planning it to wait. Over-cautious |
+| h13 "Have R9 charge", h14 "Restock aisle 7…" | 7B | Refused instead of asking, despite prompt v2 |
+
+I have not changed anything in response to these. Any fix would be tuned on the held-out set, so measuring it needs a new held-out set.
+
+### A bug my own fix introduced
+
+The dev-set re-run with prompt v2 caught a **safety violation caused by the grounding check itself**. For "R4 is going down for maintenance; move 2 totes from A2-2 to pick 1", 7B correctly left the robot open but omitted the "R4 unavailable" rule. Grounding saw "R4" in the request and assigned the job to it. The cause was treating every mention of a robot as an instruction to use it. The same mistake meant "R2 is out of service, so have R1…" would have been refused.
+
+The fix ([`grounding.py`](fleetplanner/grounding.py), `robots_said_down`) recognizes when a request describes a robot as unavailable. It marks that robot out of service, with a note to the supervisor, and never assigns or refuses on it; "back from maintenance" and "back online" don't count. A regression test uses 7B's exact output, and a property test checks that grounding never assigns an unavailable robot on any of the 80 requests. Replaying all six saved runs through the fixed check changes exactly one outcome, this one, from unsafe to correct ([`dev 7B replay`](results/replay_grounding_20261018T211125Z_qwen2.5-7b.json)). The held-out numbers above are unaffected.
+
+### Prompt v2: helped 14B, mixed for 7B
+
+On the dev set, prompt v2 fixed c07 for both models (it now treats "R4 is going down" as information rather than a reason to refuse). For 7B it also fixed two refusals of rule overrides (u03, u07), but it **broke two requests that add a closure** (c03, c10): 7B now answers "you cannot close an aisle that is not already closed". The new refusal guidance reads to it as "don't touch closures". Net effect on the full design: 7B 78% → 80%, 14B 95% → 97% ([`7B`](results/eval_20261018T211125Z_qwen2.5-7b.json), [`14B`](results/eval_20261018T211340Z_qwen2.5-14b.json)). These are single runs, so changes of a request or two are within noise.
 
 **Wrong specs that scored as success.** Some specs were wrong, but the robots happened to finish early enough that the outcome still counted as a success. 7B turned "by 2:30" into 16:30 (t01) and "quarter past two" into 15:15 (t03), and 14B invented a 14:30 deadline from a closure time (c10). The simulator can't flag these because the work happened to finish early, but they are exactly the plausible-but-wrong values a supervisor would never catch. The grounding check above now catches all three.
 
-**Caveats.** The set is small (60) and written by the system's author. Each condition was run once. Temperature 0 on Ollama isn't fully deterministic: u01 was planned in an earlier manual run but refused in this eval. Repeated runs are needed before quoting tight differences.
+**Caveats.** Both sets are small (60 dev, 20 held-out) and written by the system's author. Each condition was run once. Temperature 0 on Ollama isn't fully deterministic: u01 was planned in an earlier manual run but refused in this eval. Repeated runs are needed before quoting tight differences.
 
 ## Quick start
 
@@ -272,4 +305,5 @@ The run log (`--out`) holds every frame, event, violation, and task result. The 
 2. ~~Replay viewer~~
 3. ~~LLM translator and validator~~
 4. ~~Evaluation: 60-request suite, four conditions, oracle calibration, 7B and 14B results~~
-5. ~~Grounding check~~ (replayed on saved outputs); prompt v2; held-out run; repeated runs for variance
+5. ~~Grounding check, prompt v2, held-out evaluation~~
+6. Next: prompt v3 for the closure over-refusal (c03, c10) and h02; recognizing implied overrides (h18); a fresh held-out set to measure them; repeated runs for variance
