@@ -1,0 +1,561 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Fleet Replay</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --floor: #c9cdcf;
+    --seam: #bcc1c4;
+    --wall: #2e3438;
+    --rack: #24507f;
+    --beam: #e8792b;
+    --safety: #f2c300;
+    --danger: #d7263d;
+    --ok: #2e8b57;
+    --warn: #c98a00;
+    --ink: #1c2125;
+    --ink-soft: #586168;
+    --page: #e4e7e6;
+    --panel: #f4f5f4;
+    --line: #d2d6d5;
+    --focus: #1d6fd6;
+    --sans: "Barlow", "Segoe UI", system-ui, sans-serif;
+    --cond: "Barlow Condensed", "Arial Narrow", "Segoe UI", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ink: #e6e9e8; --ink-soft: #9aa3a8; --page: #1b1f22; --panel: #23282c; --line: #343b40;
+    }
+  }
+  :root[data-theme="dark"] {
+    --ink: #e6e9e8; --ink-soft: #9aa3a8; --page: #1b1f22; --panel: #23282c; --line: #343b40;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--page); color: var(--ink); font: 15px/1.45 var(--sans);
+    display: grid; grid-template-rows: auto 1fr auto; min-height: 100vh;
+  }
+  button, input, select { font: inherit; color: inherit; }
+  :focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+  header {
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+    padding: 14px 20px 10px;
+  }
+  h1 { font: 700 26px/1 var(--cond); margin: 0; letter-spacing: .01em; }
+  .outcome { font: 600 15px/1 var(--cond); padding: 4px 9px 3px; border-radius: 3px; }
+  .outcome.good { background: var(--ok); color: #fff; }
+  .outcome.bad { background: var(--danger); color: #fff; }
+  .loader { margin-left: auto; font-size: 13px; color: var(--ink-soft); }
+  .loader label { text-decoration: underline; cursor: pointer; }
+  .loader input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+
+  main { display: grid; grid-template-columns: minmax(0, 1fr) 330px; gap: 14px; padding: 0 20px; min-height: 0; }
+  .stage { position: relative; min-height: 360px; display: grid; place-items: center; }
+  canvas#map { display: block; max-width: 100%; }
+  .tip {
+    position: absolute; pointer-events: none; background: var(--ink); color: var(--panel);
+    font-size: 13px; padding: 5px 8px; border-radius: 3px; white-space: nowrap; display: none;
+  }
+
+  aside { background: var(--panel); border-radius: 4px; box-shadow: 0 0 0 1px var(--line); overflow: auto; min-height: 0; }
+  aside section { padding: 12px 16px; border-top: 1px solid var(--line); }
+  aside section:first-child { border-top: 0; }
+  h2 { font: 600 17px/1.2 var(--cond); margin: 0 0 8px; }
+  .clock { font: 700 44px/1 var(--cond); font-variant-numeric: tabular-nums; }
+  .clock small { display: block; font: 400 13px/1.4 var(--sans); color: var(--ink-soft); margin-top: 4px; }
+  .request { margin: 10px 0 0; font-size: 14px; color: var(--ink-soft); }
+  ul { list-style: none; margin: 0; padding: 0; }
+  .task { display: grid; grid-template-columns: 1fr auto; gap: 0 10px; padding: 6px 0; border-top: 1px dashed var(--line); }
+  .task:first-child { border-top: 0; }
+  .task .name { font-weight: 600; }
+  .task .route { grid-column: 1; font-size: 13px; color: var(--ink-soft); }
+  .task .state { grid-row: 1 / span 2; grid-column: 2; align-self: center; font: 600 14px/1 var(--cond); text-align: right; }
+  .state.done { color: var(--ok); } .state.late, .state.failed { color: var(--danger); } .state.active { color: var(--warn); }
+  .bar { height: 4px; background: var(--line); border-radius: 2px; margin-top: 4px; grid-column: 1; }
+  .bar i { display: block; height: 100%; background: var(--ink-soft); border-radius: 2px; }
+  .robot { display: grid; grid-template-columns: 14px 34px 1fr auto; align-items: center; gap: 8px; padding: 4px 0; font-size: 14px; }
+  .swatch { width: 14px; height: 14px; border-radius: 50%; }
+  .robot b { font: 600 15px/1 var(--cond); }
+  .robot .doing { color: var(--ink-soft); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .robot .pct { font-variant-numeric: tabular-nums; }
+  .rule { font-size: 14px; padding: 3px 0; }
+  .rule.on { font-weight: 600; }
+  .issue { display: block; width: 100%; text-align: left; background: none; border: 0; padding: 6px 0; cursor: pointer; font-size: 14px; border-top: 1px dashed var(--line); }
+  .issue:first-child { border-top: 0; }
+  .issue .when { color: var(--ink-soft); font-variant-numeric: tabular-nums; margin-right: 6px; }
+  .issue.violation { color: var(--danger); }
+  .issue.current { background: color-mix(in srgb, var(--danger) 12%, transparent); }
+  .empty { color: var(--ink-soft); font-size: 14px; margin: 0; }
+
+  footer { display: grid; grid-template-columns: auto auto 1fr auto; align-items: center; gap: 12px; padding: 12px 20px 16px; }
+  .btn { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 6px 12px; cursor: pointer; min-width: 40px; }
+  .btn:hover { border-color: var(--ink-soft); }
+  .btn.play { font-weight: 600; min-width: 78px; }
+  .timeline { position: relative; height: 34px; }
+  .timeline canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .timeline input { position: absolute; inset: 0; width: 100%; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; }
+  .timeline input::-webkit-slider-runnable-track { height: 34px; background: transparent; }
+  .timeline input::-moz-range-track { height: 34px; background: transparent; }
+  .timeline input::-webkit-slider-thumb { -webkit-appearance: none; width: 3px; height: 34px; background: var(--ink); border-radius: 1px; }
+  .timeline input::-moz-range-thumb { width: 3px; height: 34px; background: var(--ink); border: 0; border-radius: 1px; }
+  .opts { display: flex; gap: 12px; align-items: center; font-size: 14px; }
+  .opts select { background: var(--panel); border: 1px solid var(--line); border-radius: 4px; padding: 4px 6px; }
+
+  .drop { position: fixed; inset: 0; display: none; place-items: center; background: color-mix(in srgb, var(--page) 85%, transparent);
+          font: 600 22px var(--cond); border: 3px dashed var(--safety); z-index: 10; }
+  body.dragging .drop { display: grid; }
+  .welcome { max-width: 46ch; text-align: center; color: var(--ink-soft); }
+  .welcome strong { display: block; font: 700 24px/1.2 var(--cond); color: var(--ink); margin-bottom: 6px; }
+
+  @media (max-width: 900px) {
+    body { display: block; }
+    main { grid-template-columns: 1fr; padding: 0 12px; }
+    .stage { min-height: 0; padding: 8px 0; }
+    aside { overflow: visible; margin-bottom: 120px; }
+    header { padding: 12px 12px 6px; }
+    footer { position: fixed; left: 0; right: 0; bottom: 0; background: var(--page); border-top: 1px solid var(--line);
+             grid-template-columns: auto auto 1fr; padding: 10px 12px; }
+    .opts { grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1 id="title">Fleet replay</h1>
+  <span id="outcome" class="outcome" hidden></span>
+  <span class="loader"><label for="file">Open a run log</label> or drop one anywhere
+    <input id="file" type="file" accept=".json,application/json"></span>
+</header>
+
+<main>
+  <div class="stage" id="stage">
+    <canvas id="map" aria-label="Warehouse map replay"></canvas>
+    <div class="tip" id="tip"></div>
+    <p class="welcome" id="welcome"><strong>No run loaded</strong>
+      Create one with <code>python -m fleetplanner run MAP SPEC --out run.json</code>, then open it here.</p>
+  </div>
+  <aside aria-live="polite">
+    <section>
+      <div class="clock" id="clock">--:--:--<small>step 0</small></div>
+      <p class="request" id="summary"></p>
+    </section>
+    <section><h2>Tasks</h2><ul id="tasks"></ul></section>
+    <section><h2>Robots</h2><ul id="robots"></ul></section>
+    <section><h2>Rules</h2><ul id="rules"></ul></section>
+    <section><h2>Issues</h2><div id="issues"></div></section>
+  </aside>
+</main>
+
+<footer>
+  <button class="btn play" id="play" aria-keyshortcuts="Space">Play</button>
+  <span>
+    <button class="btn" id="back" aria-label="Step back" aria-keyshortcuts="ArrowLeft">◀</button>
+    <button class="btn" id="fwd" aria-label="Step forward" aria-keyshortcuts="ArrowRight">▶</button>
+  </span>
+  <div class="timeline">
+    <canvas id="ticks"></canvas>
+    <input type="range" id="scrub" min="0" max="0" value="0" aria-label="Timeline">
+  </div>
+  <div class="opts">
+    <label><input type="checkbox" id="routes" checked> Planned routes</label>
+    <label>Speed <select id="speed"><option value="4">0.5×</option><option value="8" selected>1×</option><option value="16">2×</option><option value="32">4×</option></select></label>
+  </div>
+</footer>
+<div class="drop">Drop the run log to replay it</div>
+
+<script>
+const EMBEDDED = /*__RUNLOG__*/null;
+const ROBOT_COLORS = ["#0f9d9a", "#c2185b", "#6a9a1f", "#6c4ad6", "#b5651d", "#00838f", "#ad1457", "#455a64"];
+const $ = (id) => document.getElementById(id);
+const S = { log: null, step: 0, playing: false, timer: null, cell: 32 };
+
+// ── derived data ────────────────────────────────────────────────────────────
+function clockToStep(w, hhmm) {
+  const [sh, sm] = w.start_time.split(":").map(Number), [h, m] = hhmm.split(":").map(Number);
+  return Math.floor(((h * 60 + m) - (sh * 60 + sm)) * 60 / w.step_seconds);
+}
+function stepToClock(w, step) {
+  const [sh, sm] = w.start_time.split(":").map(Number);
+  const t = sh * 3600 + sm * 60 + step * w.step_seconds;
+  const p = (n) => String(n).padStart(2, "0");
+  return `${p(Math.floor(t / 3600) % 24)}:${p(Math.floor(t / 60) % 60)}:${p(t % 60)}`;
+}
+function hhmm(w, step) { return stepToClock(w, step).slice(0, 5); }
+
+function prepare(log) {
+  const w = log.world;
+  const rows = w.grid.split("\n");
+  const blocked = (x, y) => y < 0 || y >= rows.length || x < 0 || x >= rows[y].length || rows[y][x] === "#";
+  const isWall = (x, y) => blocked(x, y) && (x === 0 || y === 0 || x === w.width - 1 || y === w.height - 1);
+  const zoneCells = Object.fromEntries(Object.entries(w.zones).map(([k, cells]) => [k, cells]));
+  const windows = log.spec.constraints.filter(c => c.zone).map(c => ({
+    type: c.type, zone: c.zone,
+    lo: c.start ? clockToStep(w, c.start) : -Infinity,
+    hi: c.end ? clockToStep(w, c.end) : Infinity,
+    label: `${c.type === "zone_closed" ? "Closed" : "Keep clear"}: ${c.zone.replaceAll("_", " ")}` +
+      (c.start || c.end ? ` ${c.start || "start"}–${c.end || "end of shift"}` : " all shift"),
+  }));
+  const robots = w.robots.map((r, i) => ({ ...r, color: ROBOT_COLORS[i % ROBOT_COLORS.length] }));
+  const locAt = {};
+  for (const [name, [x, y]] of Object.entries(w.locations)) locAt[`${x},${y}`] = name;
+  const delivered = {};   // task -> sorted steps of each drop
+  for (const e of log.events) if (e.kind === "drop") (delivered[e.task] ||= []).push(e.step);
+  return { w, rows, blocked, isWall, zoneCells, windows, robots, locAt, delivered,
+           frames: log.frames, last: log.frames.length - 1 };
+}
+
+// ── loading ─────────────────────────────────────────────────────────────────
+function load(log, name) {
+  if (!log || !log.frames || !log.world) { showError("That file is not a fleet planner run log."); return; }
+  S.log = log; S.d = prepare(log); S.step = 0; pause();
+  $("welcome").hidden = true;
+  $("title").textContent = name ? `Fleet replay: ${name}` : `Fleet replay: ${log.world.name}`;
+  const m = log.metrics, out = $("outcome");
+  out.hidden = false;
+  out.className = "outcome " + (m.success ? "good" : "bad");
+  out.textContent = m.success ? "All tasks done, no violations"
+    : `${m.tasks_on_time}/${m.tasks_total} tasks on time, ${m.violation_count} violation${m.violation_count === 1 ? "" : "s"}`;
+  const planner = log.plan.meta?.planner || "unknown planner";
+  $("summary").textContent = `${log.spec.tasks.length} tasks, ${log.world.robots.length} robots, planned by ${planner}. ` +
+    `Shift runs ${hhmm(log.world, 0)}–${hhmm(log.world, S.d.last)}.`;
+  $("scrub").max = S.d.last;
+  renderIssues(); resize(); drawTicks(); render();
+}
+function showError(msg) { const w = $("welcome"); w.hidden = false; w.innerHTML = `<strong>Can't open that file</strong>${msg}`; }
+
+$("file").addEventListener("change", (e) => readFile(e.target.files[0]));
+function readFile(file) {
+  if (!file) return;
+  file.text().then(t => { try { load(JSON.parse(t), file.name.replace(/\.json$/, "")); } catch { showError("It isn't valid JSON."); } });
+}
+addEventListener("dragover", (e) => { e.preventDefault(); document.body.classList.add("dragging"); });
+addEventListener("dragleave", (e) => { if (!e.relatedTarget) document.body.classList.remove("dragging"); });
+addEventListener("drop", (e) => { e.preventDefault(); document.body.classList.remove("dragging"); readFile(e.dataTransfer.files[0]); });
+
+// ── map drawing ─────────────────────────────────────────────────────────────
+let hatch = null, clearFill = null;
+function patterns(ctx, c) {
+  const p = document.createElement("canvas"); p.width = p.height = Math.max(8, Math.round(c / 3));
+  const g = p.getContext("2d"), n = p.width;
+  g.fillStyle = "#1c1c1c"; g.fillRect(0, 0, n, n);
+  g.strokeStyle = "#f2c300"; g.lineWidth = n / 2.6;
+  for (const o of [-n, 0, n]) { g.beginPath(); g.moveTo(o, n); g.lineTo(o + n, 0); g.stroke(); }
+  hatch = ctx.createPattern(p, "repeat");
+  const q = document.createElement("canvas"); q.width = q.height = n;
+  const h = q.getContext("2d");
+  h.strokeStyle = "rgba(242,195,0,.45)"; h.lineWidth = 1.5;
+  for (const o of [-n, 0, n]) { h.beginPath(); h.moveTo(o, n); h.lineTo(o + n, 0); h.stroke(); }
+  clearFill = ctx.createPattern(q, "repeat");
+}
+
+function resize() {
+  if (!S.d) return;
+  const stage = $("stage"), { w } = S.d;
+  const avail = stage.clientWidth;
+  const hAvail = innerWidth < 900 ? 9999 : stage.clientHeight - 8;
+  S.cell = Math.max(14, Math.floor(Math.min(avail / w.width, hAvail / w.height)));
+  const cv = $("map"), dpr = devicePixelRatio || 1;
+  cv.width = w.width * S.cell * dpr; cv.height = w.height * S.cell * dpr;
+  cv.style.width = `${w.width * S.cell}px`; cv.style.height = `${w.height * S.cell}px`;
+  const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  patterns(ctx, S.cell);
+  render();
+}
+addEventListener("resize", () => { resize(); drawTicks(); });
+
+function activeWindows(step) { return S.d.windows.filter(z => z.lo <= step && step < z.hi); }
+
+function render() {
+  if (!S.d) return;
+  const { w, isWall, blocked, frames, robots, locAt } = S.d, c = S.cell, step = S.step;
+  const ctx = $("map").getContext("2d");
+  const px = (x) => x * c, cx = (x) => x * c + c / 2;
+
+  // floor and seams
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--floor");
+  ctx.fillRect(0, 0, w.width * c, w.height * c);
+  ctx.strokeStyle = "#bcc1c4"; ctx.lineWidth = 1;
+  for (let x = 1; x < w.width; x++) { ctx.beginPath(); ctx.moveTo(px(x) + .5, 0); ctx.lineTo(px(x) + .5, w.height * c); ctx.stroke(); }
+  for (let y = 1; y < w.height; y++) { ctx.beginPath(); ctx.moveTo(0, px(y) + .5); ctx.lineTo(w.width * c, px(y) + .5); ctx.stroke(); }
+
+  // zones from the spec: hatched when closed now, outlined when the window is later or over
+  const active = new Set(activeWindows(step));
+  for (const z of S.d.windows) {
+    const cells = S.d.zoneCells[z.zone] || [];
+    const on = active.has(z);
+    for (const [x, y] of cells) {
+      if (on) { ctx.fillStyle = z.type === "zone_closed" ? hatch : clearFill; ctx.fillRect(px(x), px(y), c, c); }
+    }
+    if (cells.length) {
+      const xs = cells.map(p => p[0]), ys = cells.map(p => p[1]);
+      const x0 = Math.min(...xs), y0 = Math.min(...ys), x1 = Math.max(...xs) + 1, y1 = Math.max(...ys) + 1;
+      ctx.save();
+      ctx.strokeStyle = "#f2c300"; ctx.lineWidth = on ? 3 : 2;
+      if (!on) ctx.setLineDash([6, 5]);
+      ctx.strokeRect(px(x0) + 1.5, px(y0) + 1.5, (x1 - x0) * c - 3, (y1 - y0) * c - 3);
+      ctx.restore();
+    }
+  }
+
+  // walls and racking
+  for (let y = 0; y < w.height; y++) for (let x = 0; x < w.width; x++) {
+    if (!blocked(x, y)) continue;
+    if (isWall(x, y)) {
+      ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--page");
+      ctx.fillRect(px(x), px(y), c, c);
+      continue;
+    }
+    ctx.fillStyle = "#24507f"; ctx.fillRect(px(x) + 1, px(y) + 1, c - 2, c - 2);
+    ctx.fillStyle = "#e8792b";
+    ctx.fillRect(px(x) + 1, px(y) + c * .3, c - 2, Math.max(2, c * .08));
+    ctx.fillRect(px(x) + 1, px(y) + c * .65, c - 2, Math.max(2, c * .08));
+  }
+
+  // outer wall as one heavy line around the floor
+  ctx.strokeStyle = "#2e3438"; ctx.lineWidth = Math.max(4, c * .14);
+  ctx.strokeRect(px(1) - ctx.lineWidth / 2, px(1) - ctx.lineWidth / 2,
+                 (w.width - 2) * c + ctx.lineWidth, (w.height - 2) * c + ctx.lineWidth);
+
+  // locations
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  for (const [name, [x, y]] of Object.entries(w.locations)) {
+    const label = name.startsWith("pick_") ? "P" + name.slice(5) : name.startsWith("charger_") ? "" :
+                  name === "dock" ? "Dock" : name.startsWith("home_") ? "" : name;
+    if (name.startsWith("charger")) {
+      ctx.fillStyle = "#2e3438"; ctx.fillRect(px(x) + c * .2, px(y) + c * .2, c * .6, c * .6);
+      ctx.fillStyle = "#f2c300"; ctx.beginPath();
+      ctx.moveTo(cx(x) + c * .06, px(y) + c * .26); ctx.lineTo(cx(x) - c * .14, cx(y) + c * .04);
+      ctx.lineTo(cx(x) + c * .01, cx(y) + c * .04); ctx.lineTo(cx(x) - c * .06, px(y) + c * .74);
+      ctx.lineTo(cx(x) + c * .14, cx(y) - c * .04); ctx.lineTo(cx(x) - c * .01, cx(y) - c * .04); ctx.closePath(); ctx.fill();
+    } else if (name.startsWith("home_")) {
+      ctx.strokeStyle = "rgba(46,52,56,.35)"; ctx.setLineDash([3, 3]); ctx.lineWidth = 1.5;
+      ctx.strokeRect(px(x) + c * .15, px(y) + c * .15, c * .7, c * .7); ctx.setLineDash([]);
+    } else if (name.startsWith("pick_") || name === "dock") {
+      ctx.fillStyle = "#fff"; ctx.strokeStyle = "#2e3438"; ctx.lineWidth = 1.5;
+      ctx.fillRect(px(x) + 2, px(y) + 2, c - 4, c - 4); ctx.strokeRect(px(x) + 2, px(y) + 2, c - 4, c - 4);
+      ctx.fillStyle = "#1c2125"; ctx.font = `700 ${Math.round(c * (label.length > 2 ? .34 : .44))}px Barlow Condensed, sans-serif`;
+      ctx.fillText(label, cx(x), cx(y) + 1);
+    } else {
+      ctx.fillStyle = "#e8792b"; ctx.beginPath(); ctx.arc(cx(x), cx(y), Math.max(2.5, c * .09), 0, Math.PI * 2); ctx.fill();
+      if (c >= 30) {
+        ctx.fillStyle = "#3a4247"; ctx.font = `600 ${Math.round(c * .27)}px Barlow Condensed, sans-serif`;
+        ctx.fillText(label, cx(x), px(y) + c * .82);
+      }
+    }
+  }
+
+  // planned routes ahead, then trails behind
+  const showRoutes = $("routes").checked;
+  for (const r of robots) {
+    const pos = (s) => frames[Math.max(0, Math.min(s, S.d.last))][r.id];
+    if (showRoutes) {
+      ctx.save(); ctx.strokeStyle = r.color; ctx.globalAlpha = .55; ctx.lineWidth = Math.max(1.5, c * .06); ctx.setLineDash([c * .14, c * .14]);
+      ctx.beginPath(); let started = false;
+      for (let s = step; s <= Math.min(step + 40, S.d.last); s++) {
+        const [x, y] = pos(s); started ? ctx.lineTo(cx(x), cx(y)) : ctx.moveTo(cx(x), cx(y)); started = true;
+      }
+      ctx.stroke(); ctx.restore();
+    }
+    ctx.save(); ctx.strokeStyle = r.color; ctx.lineCap = "round"; ctx.lineWidth = Math.max(2, c * .12);
+    for (let s = Math.max(1, step - 10); s <= step; s++) {
+      const [ax, ay] = pos(s - 1), [bx, by] = pos(s);
+      ctx.globalAlpha = .08 + .32 * (1 - (step - s) / 10);
+      ctx.beginPath(); ctx.moveTo(cx(ax), cx(ay)); ctx.lineTo(cx(bx), cx(by)); ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  // robots
+  const violatingNow = currentViolations();
+  const flagged = new Set(violatingNow.flatMap(v => v.robot.split("+")));
+  for (const r of robots) {
+    const [x, y, battery, cargo] = frames[step][r.id];
+    const R = c * .36;
+    if (flagged.has(r.id)) {
+      ctx.save(); ctx.strokeStyle = "#d7263d"; ctx.lineWidth = 3; ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.arc(cx(x), cx(y), R + c * .14, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+    }
+    ctx.fillStyle = r.color; ctx.beginPath(); ctx.arc(cx(x), cx(y), R, 0, Math.PI * 2); ctx.fill();
+    // battery ring
+    ctx.lineWidth = Math.max(2, c * .07);
+    ctx.strokeStyle = "rgba(255,255,255,.55)"; ctx.beginPath(); ctx.arc(cx(x), cx(y), R - ctx.lineWidth / 2 - 1, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = battery > 50 ? "#e9f7ef" : battery > 20 ? "#f2c300" : "#ff6b6b";
+    ctx.beginPath(); ctx.arc(cx(x), cx(y), R - ctx.lineWidth / 2 - 1, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * battery / 100); ctx.stroke();
+    ctx.fillStyle = "#fff"; ctx.font = `700 ${Math.round(c * .32)}px Barlow Condensed, sans-serif`;
+    ctx.fillText(r.id, cx(x), cx(y) + 1);
+    if (cargo) {   // tote count
+      const s = c * .3;
+      ctx.fillStyle = "#e8792b"; ctx.fillRect(cx(x) + R * .45, cx(y) - R - s * .25, s, s);
+      ctx.fillStyle = "#fff"; ctx.font = `700 ${Math.round(s * .8)}px Barlow Condensed, sans-serif`;
+      ctx.fillText(cargo, cx(x) + R * .45 + s / 2, cx(y) - R + s * .27);
+    }
+  }
+  // collision markers
+  for (const v of violatingNow) {
+    const m = v.detail.match(/\[(\d+), (\d+)\]/);
+    if (v.kind === "collision" && m) {
+      const x = +m[1], y = +m[2];
+      ctx.save(); ctx.strokeStyle = "#d7263d"; ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.moveTo(px(x) + 4, px(y) + 4); ctx.lineTo(px(x) + c - 4, px(y) + c - 4);
+      ctx.moveTo(px(x) + c - 4, px(y) + 4); ctx.lineTo(px(x) + 4, px(y) + c - 4); ctx.stroke(); ctx.restore();
+    }
+  }
+  renderPanel();
+}
+
+// ── side panel ──────────────────────────────────────────────────────────────
+function currentViolations() {
+  return (S.log?.violations || []).filter(v => v.start_step <= S.step && S.step <= v.end_step);
+}
+function actionText(a) {
+  if (!a) return "parked";
+  if (a === "wait") return "waiting";
+  if ("NSEW".includes(a)) return "moving";
+  if (a === "charge") return "charging";
+  const [k, t] = a.split(":");
+  return `${k === "pick" ? "picking" : "dropping"} ${t}`;
+}
+function routeText(t) {
+  if (t.type === "transport") return `${t.quantity} × ${t.from_location} → ${t.to_location}`;
+  if (t.type === "charge") return `charge ${t.robot || "a robot"} to ${t.target_battery}%`;
+  return `park ${t.robot || "a robot"} at ${t.location}`;
+}
+function renderPanel() {
+  const { w, frames, robots, delivered } = S.d, step = S.step, log = S.log;
+  $("clock").innerHTML = `${stepToClock(w, step)}<small>step ${step} of ${S.d.last}</small>`;
+  $("scrub").value = step;
+
+  $("tasks").innerHTML = log.spec.tasks.map(t => {
+    const rep = log.tasks[t.id];
+    let state, cls;
+    if (rep.complete && rep.completion_step <= step) {
+      state = rep.on_time ? `Done ${hhmm(w, rep.completion_step)}` : `Late ${hhmm(w, rep.completion_step)}`;
+      cls = rep.on_time ? "done" : "late";
+    } else if (!rep.complete && step === S.d.last) { state = "Not done"; cls = "failed"; }
+    else {
+      const who = log.plan.assignments[t.id] || t.robot;
+      const started = t.type === "transport"
+        ? log.events.some(e => e.task === t.id && e.step <= step)
+        : t.type === "charge" && log.events.some(e => e.kind === "charge" && e.robot === who && e.step <= step);
+      state = started ? "In progress" : who ? "Queued" : "Unassigned"; cls = started ? "active" : "";
+    }
+    const due = t.deadline ? `, due ${t.deadline}` : "";
+    const who = log.plan.assignments[t.id] ? `, ${log.plan.assignments[t.id]}` : "";
+    let bar = "";
+    if (t.type === "transport") {
+      const n = (delivered[t.id] || []).filter(s => s <= step).length;
+      bar = `<div class="bar" title="${n} of ${t.quantity} delivered"><i style="width:${100 * n / t.quantity}%"></i></div>`;
+    }
+    return `<li class="task"><span class="name">${t.id}</span><span class="state ${cls}">${state}</span>
+      <span class="route">${routeText(t)}${due}${who}</span>${bar}</li>`;
+  }).join("") || `<li class="empty">No tasks.</li>`;
+
+  const unavailable = new Set(log.spec.constraints.filter(c => c.type === "robot_unavailable").map(c => c.robot));
+  $("robots").innerHTML = robots.map(r => {
+    const [, , battery, cargo] = frames[step][r.id];
+    const acts = log.plan.actions[r.id] || [];
+    const doing = unavailable.has(r.id) ? "out of service" : actionText(acts[step]);
+    return `<li class="robot"><span class="swatch" style="background:${r.color}"></span><b>${r.id}</b>
+      <span class="doing">${doing}${cargo ? `, ${cargo} tote${cargo > 1 ? "s" : ""}` : ""}</span>
+      <span class="pct">${Math.round(battery)}%</span></li>`;
+  }).join("");
+
+  const active = new Set(activeWindows(step));
+  const rules = S.d.windows.map(z => `<li class="rule ${active.has(z) ? "on" : ""}">${z.label}${active.has(z) ? " (now)" : ""}</li>`);
+  for (const r of unavailable) rules.push(`<li class="rule on">${r} out of service</li>`);
+  $("rules").innerHTML = rules.join("") || `<li class="empty">No rules for this shift.</li>`;
+
+  for (const b of document.querySelectorAll(".issue.violation"))
+    b.classList.toggle("current", +b.dataset.start <= step && step <= +b.dataset.end);
+}
+
+function renderIssues() {
+  const log = S.log, w = log.world;
+  const viol = log.violations.map(v =>
+    `<button class="issue violation" data-start="${v.start_step}" data-end="${v.end_step}">
+      <span class="when">${stepToClock(w, v.start_step)}</span>${v.kind.replaceAll("_", " ")}: ${v.robot}, ${v.detail}</button>`);
+  const notes = (log.plan.meta?.issues || []).map(i => `<p class="issue">Planner: ${i}</p>`);
+  $("issues").innerHTML = [...viol, ...notes].join("") || `<p class="empty">No violations. The simulator found nothing wrong.</p>`;
+  for (const b of document.querySelectorAll(".issue.violation"))
+    b.addEventListener("click", () => { pause(); seek(+b.dataset.start); });
+}
+
+// ── timeline ────────────────────────────────────────────────────────────────
+function drawTicks() {
+  if (!S.d) return;
+  const cv = $("ticks"), dpr = devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  cv.width = W * dpr; cv.height = H * dpr;
+  const ctx = cv.getContext("2d"); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  const x = (s) => 8 + (W - 16) * s / Math.max(1, S.d.last);
+  ctx.fillStyle = getComputedStyle(document.documentElement).getPropertyValue("--line");
+  ctx.fillRect(0, H / 2 - 2, W, 4);
+  for (const e of S.log.events) if (e.kind === "drop") { ctx.fillStyle = "#e8792b"; ctx.fillRect(x(e.step) - 1, H / 2 - 7, 2, 14); }
+  for (const t of Object.values(S.log.tasks)) if (t.complete) {
+    ctx.fillStyle = t.on_time ? "#2e8b57" : "#d7263d";
+    ctx.beginPath(); ctx.arc(x(t.completion_step), H / 2, 5, 0, Math.PI * 2); ctx.fill();
+  }
+  for (const v of S.log.violations) {
+    ctx.fillStyle = "#d7263d"; ctx.fillRect(x(v.start_step) - 2, 2, Math.max(4, x(v.end_step) - x(v.start_step) + 4), 7);
+  }
+}
+
+// ── playback ────────────────────────────────────────────────────────────────
+function seek(s) { if (!S.d) return; S.step = Math.max(0, Math.min(S.d.last, s)); render(); }
+function play() {
+  if (!S.d) return;
+  if (S.step >= S.d.last) S.step = 0;
+  S.playing = true; $("play").textContent = "Pause";
+  const tick = () => {
+    if (!S.playing) return;
+    if (S.step >= S.d.last) { pause(); return; }
+    seek(S.step + 1);
+    S.timer = setTimeout(tick, 1000 / +$("speed").value);
+  };
+  tick();
+}
+function pause() { S.playing = false; clearTimeout(S.timer); $("play").textContent = "Play"; }
+$("play").addEventListener("click", () => (S.playing ? pause() : play()));
+$("back").addEventListener("click", () => { pause(); seek(S.step - 1); });
+$("fwd").addEventListener("click", () => { pause(); seek(S.step + 1); });
+$("scrub").addEventListener("input", (e) => { pause(); seek(+e.target.value); });
+$("routes").addEventListener("change", render);
+addEventListener("keydown", (e) => {
+  if (e.target.matches("input[type=file], select")) return;
+  if (e.code === "Space") { e.preventDefault(); S.playing ? pause() : play(); }
+  else if (e.code === "ArrowRight") { pause(); seek(S.step + (e.shiftKey ? 10 : 1)); }
+  else if (e.code === "ArrowLeft") { pause(); seek(S.step - (e.shiftKey ? 10 : 1)); }
+});
+
+// hover info
+$("map").addEventListener("mousemove", (e) => {
+  if (!S.d) return;
+  const r = e.target.getBoundingClientRect(), x = Math.floor((e.clientX - r.left) / S.cell), y = Math.floor((e.clientY - r.top) / S.cell);
+  const parts = [];
+  const loc = S.d.locAt[`${x},${y}`]; if (loc) parts.push(loc.replaceAll("_", " "));
+  for (const rb of S.d.robots) { const f = S.d.frames[S.step][rb.id]; if (f[0] === x && f[1] === y) parts.push(`${rb.id}, ${f[2].toFixed(1)}% battery`); }
+  const zones = Object.entries(S.d.zoneCells).filter(([, cells]) => cells.some(c => c[0] === x && c[1] === y)).map(([k]) => k.replaceAll("_", " "));
+  if (zones.length) parts.push(zones.join(", "));
+  const tip = $("tip");
+  if (!parts.length) { tip.style.display = "none"; return; }
+  tip.textContent = parts.join("; ");
+  tip.style.display = "block";
+  const sr = $("stage").getBoundingClientRect();
+  tip.style.left = `${e.clientX - sr.left + 14}px`; tip.style.top = `${e.clientY - sr.top + 14}px`;
+});
+$("map").addEventListener("mouseleave", () => ($("tip").style.display = "none"));
+
+// start
+const params = new URLSearchParams(location.search);
+if (EMBEDDED) load(EMBEDDED, EMBEDDED.name);
+else if (params.get("log")) fetch(params.get("log")).then(r => r.json()).then(j => load(j, params.get("log").split("/").pop().replace(/\.json$/, ""))).catch(() => showError("Couldn't fetch that log."));
+document.fonts?.ready.then(() => { render(); });
+</script>
+</body>
+</html>

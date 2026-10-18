@@ -1,0 +1,7 @@
+# "Aisle 3 is closed 14:02-14:12 for a spill. Move 4 totes from A3-1 to pick 2,
+#  and 2 from the dock to A3-2."
+tasks:
+  - {id: a3_picks, type: transport, from_location: A3-1, to_location: pick_2, quantity: 4, priority: 3}
+  - {id: a3_restock, type: transport, from_location: dock, to_location: A3-2, quantity: 2}
+constraints:
+  - {type: zone_closed, zone: aisle_3, start: "14:02", end: "14:12"}

@@ -74,6 +74,32 @@ class Rules:
     def can_stop(self, cell: Cell, t: int) -> bool:
         return not any(lo <= t < hi and cell in cells for cells, lo, hi in self.no_stop)
 
+    def _exit_distance(self, cells: frozenset[Cell]) -> dict[Cell, int]:
+        """Steps from each cell in a zone to the nearest cell outside it."""
+        cache = self.__dict__.setdefault("_exit_cache", {})
+        if cells not in cache:
+            outside = [c for c in self.world.free_cells if c not in cells]
+            dist = {c: 0 for c in outside}
+            frontier = list(outside)
+            while frontier:
+                nxt = []
+                for c in frontier:
+                    for n in self.world.neighbors(c):
+                        if n not in dist:
+                            dist[n] = dist[c] + 1
+                            nxt.append(n)
+                frontier = nxt
+            cache[cells] = dist
+        return cache[cells]
+
+    def trapped_after(self, cell: Cell, t: int, margin: int = 2) -> bool:
+        """Would a robot still at `cell` at time t be caught inside a zone that closes soon?"""
+        for cells, lo, hi in self.closed:
+            if cell in cells and t < lo:
+                if t + self._exit_distance(cells).get(cell, 10**6) + margin >= lo:
+                    return True
+        return False
+
     def never_stoppable(self, cell: Cell) -> bool:
         """Closed or keep-clear with no end time: nothing can ever dwell here."""
         return any(hi == INF and cell in cells for cells, lo, hi in self.closed + self.no_stop)
@@ -133,6 +159,9 @@ def space_time_astar(
         for k in range(1, dwell + 1):
             if not res.free(goal, t + k) or rules.is_closed(goal, t + k) or not rules.can_stop(goal, t + k):
                 return False
+        # Don't finish inside a zone that is about to close unless there's time to get out.
+        if not final and rules.trapped_after(goal, t + dwell):
+            return False
         if final:
             end = t + dwell
             return res.free_after(goal, end) and not rules.ever_restricted_after(goal, end)
@@ -358,7 +387,8 @@ class Planner:
                     dwell = ["charge"] * need
                 # Estimates ignore detours, so enforce a hard floor on the real route.
                 floor = 0 if leg.charge_target is not None else bm.reserve / 2
-                if arrive <= floor:
+                after_dwell = arrive if leg.charge_target is not None else arrive - len(dwell) * bm.idle_cost
+                if min(arrive, after_dwell) <= floor:
                     raise PlanningError(f"battery would fall to {arrive:.1f}% before reaching {list(leg.goal)}")
             except PlanningError as exc:
                 raise _LegFailed(i, str(exc)) from exc

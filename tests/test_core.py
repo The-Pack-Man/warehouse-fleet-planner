@@ -109,7 +109,7 @@ def test_astar_routes_around_closed_zone():
 
 # ── Planner + simulator end to end ────────────────────────────────────────────
 
-@pytest.mark.parametrize("name", ["restock_rush", "low_battery", "busy_shift"])
+@pytest.mark.parametrize("name", ["restock_rush", "low_battery", "busy_shift", "aisle_closed"])
 def test_examples_succeed(name):
     import yaml
     s = MissionSpec.model_validate(yaml.safe_load((MAPS.parent / "specs" / "examples" / f"{name}.yaml").read_text()))
@@ -127,3 +127,46 @@ def test_random_shifts_are_safe_and_failures_are_reported(seed):
     issues = " ".join(plan.meta["issues"])
     for tid, t in log["tasks"].items():
         assert t["complete"] or tid in issues or plan.assignments.get(tid, "?") in issues, (tid, plan.meta)
+
+
+def test_naive_plan_that_ignores_closure_is_caught():
+    import json
+    import yaml
+    s = MissionSpec.model_validate(yaml.safe_load((MAPS.parent / "specs" / "examples" / "aisle_closed.yaml").read_text()))
+    plan = Plan.model_validate(json.loads((MAPS.parent / "plans" / "naive_ignores_closure.json").read_text()))
+    log = simulate(WAREHOUSE, s, plan)
+    assert {v["kind"] for v in log["violations"]} == {"closed_zone"}
+
+
+def test_robot_waits_out_closure_instead_of_getting_trapped():
+    import yaml
+    s = MissionSpec.model_validate(yaml.safe_load((MAPS.parent / "specs" / "examples" / "aisle_closed.yaml").read_text()))
+    plan = Planner(WAREHOUSE).plan(s)
+    assert not plan.meta["issues"]
+    log = simulate(WAREHOUSE, s, plan)
+    assert log["metrics"]["success"]
+    closes = WAREHOUSE.clock_to_step("14:12")
+    assert log["tasks"]["a3_picks"]["completion_step"] > closes   # it had to wait for the aisle to reopen
+
+
+# ── Viewer ────────────────────────────────────────────────────────────────────
+
+def test_viewer_embeds_log_safely():
+    from fleetplanner.viewer import PLACEHOLDER, build_html
+    s = spec(tasks=[{"id": "</script><b>x", "type": "park", "robot": "R1", "location": "A"}])
+    log = simulate(TINY, s, Planner(TINY).plan(s))
+    html = build_html(log, "t")
+    assert PLACEHOLDER not in html and "</script><b>" not in html
+    assert html.count("</script>") == 1
+
+
+def test_cli_view_writes_replay(tmp_path):
+    import json
+    import subprocess
+    import sys
+    s = spec(tasks=[{"id": "p", "type": "park", "robot": "R1", "location": "A"}])
+    log_path = tmp_path / "run.json"
+    log_path.write_text(json.dumps(simulate(TINY, s, Planner(TINY).plan(s))))
+    out = tmp_path / "run.html"
+    subprocess.run([sys.executable, "-m", "fleetplanner", "view", str(log_path), "--html", str(out)], check=True)
+    assert out.exists() and "const EMBEDDED = {" in out.read_text()
