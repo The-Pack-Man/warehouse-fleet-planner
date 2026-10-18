@@ -1,0 +1,30 @@
+# Tiny map for tests: one aisle, two corridors.
+name: tiny
+start_time: "08:00"
+step_seconds: 10
+grid: |
+  #########
+  #.......#
+  #.##.##.#
+  #.##.##.#
+  #.......#
+  #########
+locations:
+  A: [4, 2]
+  B: [1, 3]
+  pick: [6, 4]
+  charger: [7, 2]
+  home_1: [1, 4]
+  home_2: [3, 4]
+zones:
+  aisle: [4, 2, 4, 3]
+  west_lane: [1, 2, 1, 3]
+  north: [1, 1, 7, 1]
+robots:
+  - {id: R1, home: home_1, battery: 90, capacity: 1}
+  - {id: R2, home: home_2, battery: 90, capacity: 1}
+battery:
+  move_cost: 0.5
+  idle_cost: 0.05
+  charge_rate: 5.0
+  reserve: 20

@@ -1,0 +1,8 @@
+# "Restock aisle 4 from the dock before 14:30, send 3 totes from A2 to pick 1,
+#  keep the charging bay clear, and aisle 5 is closed until 14:20."
+tasks:
+  - {id: restock_a4, type: transport, from_location: dock, to_location: A4-1, quantity: 4, deadline: "14:30", priority: 4}
+  - {id: picks_a2, type: transport, from_location: A2-2, to_location: pick_1, quantity: 3, priority: 2}
+constraints:
+  - {type: keep_clear, zone: charging_bay}
+  - {type: zone_closed, zone: aisle_5, end: "14:20"}

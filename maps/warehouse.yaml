@@ -1,0 +1,71 @@
+# Medium warehouse: 5 one-lane aisles between shelf rows, two-lane cross
+# corridors north and south, a charging lane on the west edge.
+# Coordinates are [x, y] with (0, 0) at the top-left. '#' = wall or shelf.
+name: warehouse
+start_time: "14:00"
+step_seconds: 10          # one grid move per step
+grid: |
+  #####################
+  #...................#
+  #...................#
+  #.##.##.##.##.##.##.#
+  #.##.##.##.##.##.##.#
+  #.##.##.##.##.##.##.#
+  #.##.##.##.##.##.##.#
+  #.##.##.##.##.##.##.#
+  #.##.##.##.##.##.##.#
+  #.##.##.##.##.##.##.#
+  #...................#
+  #...................#
+  #####################
+
+locations:
+  # Shelf slots: two per aisle
+  A1-1: [4, 4]
+  A1-2: [4, 8]
+  A2-1: [7, 4]
+  A2-2: [7, 8]
+  A3-1: [10, 4]
+  A3-2: [10, 8]
+  A4-1: [13, 4]
+  A4-2: [13, 8]
+  A5-1: [16, 4]
+  A5-2: [16, 8]
+  # Pick stations (south) and inbound dock (north-east)
+  pick_1: [5, 11]
+  pick_2: [10, 11]
+  pick_3: [15, 11]
+  dock: [18, 1]
+  # Chargers in the west lane
+  charger_1: [1, 4]
+  charger_2: [1, 6]
+  charger_3: [1, 8]
+  # Robot home positions
+  home_1: [2, 11]
+  home_2: [7, 11]
+  home_3: [12, 11]
+  home_4: [18, 11]
+
+zones:                    # [x0, y0, x1, y1], inclusive
+  aisle_1: [4, 3, 4, 9]
+  aisle_2: [7, 3, 7, 9]
+  aisle_3: [10, 3, 10, 9]
+  aisle_4: [13, 3, 13, 9]
+  aisle_5: [16, 3, 16, 9]
+  charging_bay: [1, 3, 1, 9]
+  east_lane: [19, 3, 19, 9]
+  north_corridor: [1, 1, 19, 2]
+  south_corridor: [1, 10, 19, 11]
+  dock_area: [16, 1, 19, 2]
+
+robots:
+  - {id: R1, home: home_1, battery: 85, capacity: 2}
+  - {id: R2, home: home_2, battery: 60, capacity: 2}
+  - {id: R3, home: home_3, battery: 95, capacity: 2}
+  - {id: R4, home: home_4, battery: 35, capacity: 2}
+
+battery:
+  move_cost: 0.5          # % per move
+  idle_cost: 0.05         # % per wait step
+  charge_rate: 5.0        # % per step at a charger
+  reserve: 20             # planner keeps at least this much

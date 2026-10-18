@@ -1,0 +1,4 @@
+# "R4 is low, charge it to 90. Move 2 totes from A5-2 to pick 3."
+tasks:
+  - {id: charge_r4, type: charge, robot: R4, target_battery: 90}
+  - {id: move_a5, type: transport, from_location: A5-2, to_location: pick_3, quantity: 2}

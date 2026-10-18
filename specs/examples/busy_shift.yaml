@@ -1,0 +1,10 @@
+# Several concurrent jobs, one robot down for maintenance, aisle 3 closed.
+tasks:
+  - {id: t1, type: transport, from_location: dock, to_location: A1-1, quantity: 2, priority: 3}
+  - {id: t2, type: transport, from_location: A2-1, to_location: pick_2, quantity: 2}
+  - {id: t3, type: transport, from_location: A4-2, to_location: pick_3, quantity: 4, deadline: "14:25", priority: 5}
+  - {id: t4, type: transport, from_location: A5-1, to_location: pick_1, quantity: 1}
+  - {id: park_r3, type: park, robot: R3, location: dock}
+constraints:
+  - {type: robot_unavailable, robot: R2}
+  - {type: zone_closed, zone: aisle_3}
