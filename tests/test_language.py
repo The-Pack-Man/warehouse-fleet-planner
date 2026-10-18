@@ -159,14 +159,24 @@ def test_pipeline_plans_and_keeps_standing_rules():
 
 
 def test_llm_cannot_use_out_of_service_robot():
-    # The LLM ignores the rule and pins the job to R2. The merged site rule makes the validator reject it.
-    out = handle_request(W, "have R2 do it", scripted(plan_reply([{**MOVE, "robot": "R2"}])), TODAY)
-    assert out["status"] == "reject" and "out of service" in out["message"]
+    # The request names R2: grounding refuses before planning.
+    out = handle_request(W, "have R2 move 2 totes from A1-1 to pick 1", scripted(plan_reply([{**MOVE, "robot": "R2"}])), TODAY)
+    assert out["status"] == "refuse" and "out of service" in out["message"]
+    # The LLM pins R2 on its own: grounding unpins it, and R2 never moves.
+    out = handle_request(W, "move 2 totes from A1-1 to pick 1", scripted(plan_reply([{**MOVE, "robot": "R2"}])), TODAY)
+    assert out["status"] == "planned" and not out["log"]["plan"]["actions"].get("R2")
+
+
+def test_validator_still_rejects_out_of_service_robot_without_grounding():
+    from fleetplanner.pipeline import merge_rules
+    s = merge_rules(MissionSpec.model_validate({"tasks": [{**MOVE, "robot": "R2"}]}), TODAY)
+    v = validate(W, s)
+    assert v.status == "reject" and "out of service" in v.explain()
 
 
 def test_llm_cannot_lift_a_closure_by_omitting_it():
     # The LLM 'forgets' the aisle 3 closure; the plan must still respect it.
-    out = handle_request(W, "pick from A3-1 now", scripted(plan_reply([{**MOVE, "from_location": "A3-1"}])), TODAY)
+    out = handle_request(W, "pick 2 totes from A3-1 to pick 1", scripted(plan_reply([{**MOVE, "from_location": "A3-1"}])), TODAY)
     log = out["log"]
     assert out["status"] == "planned" and not log["violations"]
     assert log["tasks"]["m"]["completion_step"] > W.clock_to_step("14:20")

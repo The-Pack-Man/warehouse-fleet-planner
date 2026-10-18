@@ -1,7 +1,7 @@
 """
 End-to-end request handling:
 
-  request ─► translate (LLM) ─► merge standing site rules ─► validate ─► plan ─► simulate
+  request ─► translate (LLM) ─► ground ─► merge standing site rules ─► validate ─► plan ─► simulate
 
 Standing rules come from the site, not the request, so a request (or an LLM
 mistake) can add rules but never remove one.
@@ -13,6 +13,7 @@ from typing import Any
 from .sim import simulate
 from .solver import Planner
 from .spec import MissionSpec
+from .grounding import ground
 from .translate import ChatFn, translate
 from .validate import validate
 from .world import World
@@ -44,7 +45,11 @@ def handle_request(world: World, request: str, chat: ChatFn, standing: list[Any]
     if t.kind == "refuse":
         return {**out, "status": "refuse", "message": t.reason}
 
-    spec = merge_rules(t.spec, standing)
+    g = ground(world, request, t.spec, standing)
+    out["grounding"] = {"status": g.status, "notes": g.notes, "message": g.message}
+    if g.status != "ok":
+        return {**out, "status": g.status, "message": g.message, "notes": g.notes}
+    spec = merge_rules(g.spec, standing)
     v = validate(world, spec)
     out["spec"] = spec.model_dump()
     out["validation"] = v.model_dump()
@@ -56,7 +61,7 @@ def handle_request(world: World, request: str, chat: ChatFn, standing: list[Any]
     log = simulate(world, spec, plan)
     log["request"] = request
     m = log["metrics"]
-    notes = [p.message for p in v.problems] + plan.meta.get("issues", [])
+    notes = g.notes + [p.message for p in v.problems] + plan.meta.get("issues", [])
     message = (f"Planned {m['tasks_complete']}/{m['tasks_total']} tasks, {m['tasks_on_time']} on time, "
                f"{m['violation_count']} violations. Done by {m['makespan_time'][:5]}.")
     return {**out, "status": "planned", "message": message, "notes": notes, "log": log}

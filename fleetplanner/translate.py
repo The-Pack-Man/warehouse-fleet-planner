@@ -23,6 +23,10 @@ from .world import World
 
 ChatFn = Callable[[list[dict[str, str]]], str]
 
+# v1: original prompt (milestone 3-4 results). v2: deadline/window guidance, named robots,
+# self-declared outages, clarify-not-refuse for unknown names (from milestone 4 failures).
+PROMPT_VERSION = 2
+
 
 class LLMUnavailable(RuntimeError):
     """The model server can't be reached or doesn't have the requested model."""
@@ -121,8 +125,15 @@ Output exactly one JSON object with "kind" set to one of:
   Rule types: zone_closed and keep_clear take "zone" and optional "start"/"end"; robot_unavailable takes "robot".
   Priority is 1-5; use 5 for "rush", "urgent", or "ASAP", otherwise leave it out. Only set "robot" if the request names one.
   Task ids are short, unique, snake_case.
-- "clarify": the request is ambiguous, names something not on the map, or leaves out the number of totes. Ask one short question in "question".
-- "refuse": the request asks to break or ignore a site rule, use an out-of-service robot, or do something unsafe. Explain in "reason".
+  Only set "deadline" when the request gives one ("by 2:30", "before 14:40", "within 20 minutes"). A rule's start or
+  end time is not a deadline. "Quarter past two" means 14:15 and "half past two" means 14:30.
+  If the request names a robot for a task ("R3, move...", "have R1 bring..."), set that task's "robot".
+  If the request itself says a robot is going down or out of service, add a robot_unavailable rule for it. That is
+  information, not a reason to refuse.
+- "clarify": the request is ambiguous, names a location, area, or robot that isn't listed above, or leaves out the
+  number of totes or where they go. Ask one short question in "question". Use clarify, not refuse, for unknown names.
+- "refuse": the request asks to break, ignore, reopen, or turn off a site rule, or to use an out-of-service robot.
+  Explain in "reason".
 Never guess a location that isn't listed, and never weaken a site rule.
 
 Examples:

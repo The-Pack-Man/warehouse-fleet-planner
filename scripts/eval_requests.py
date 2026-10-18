@@ -27,7 +27,7 @@ sys.path.insert(0, str(ROOT))
 from fleetplanner import World  # noqa: E402
 from fleetplanner.evaluate import CONDITIONS, evaluate, load_requests, oracle_chats, summarize  # noqa: E402
 from fleetplanner.llm_planner import LLMPlanOutput  # noqa: E402
-from fleetplanner.translate import LLMUnavailable, load_rules, openai_chat  # noqa: E402
+from fleetplanner.translate import PROMPT_VERSION, LLMUnavailable, load_rules, openai_chat  # noqa: E402
 
 
 def print_summary(model: str, summary: dict) -> None:
@@ -100,9 +100,10 @@ def main() -> None:
         out = Path(args.out)
         out.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-        path = out / f"eval_{stamp}_{re.sub(r'[^A-Za-z0-9.-]+', '-', model)}.json"
+        tag = "" if Path(args.requests).stem == "requests" else f"{Path(args.requests).stem}_"
+        path = out / f"eval_{stamp}_{tag}{re.sub(r'[^A-Za-z0-9.-]+', '-', model)}.json"
         path.write_text(json.dumps({
-            "created_at": datetime.now(timezone.utc).isoformat(), "model": model,
+            "created_at": datetime.now(timezone.utc).isoformat(), "model": model, "prompt_version": PROMPT_VERSION,
             "conditions": list(conditions), "requests_file": Path(args.requests).name,
             "n_requests": len(reqs), "rules": [c.model_dump() for c in standing],
             "duration_s": round(time.monotonic() - t0, 1), "summary": summary, "rows": rows,

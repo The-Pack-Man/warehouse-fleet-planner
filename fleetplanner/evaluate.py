@@ -8,12 +8,13 @@ Conditions
                   its spec; nothing merges them back or checks the spec.
   no_validator    LLM -> spec + merged site rules -> solver
   full            LLM -> spec + merged site rules -> validator -> solver
+  grounded        LLM -> grounding check -> merged site rules -> validator -> solver
 
 Judging uses the GOLD spec plus the site rules, never the LLM's own spec, so a
 wrong deadline, a missing task, or a silently swapped robot counts against the
 system even when its plan looks fine. The three translator-based conditions
-no_validator and full share one translation per request, so they differ only in
-what happens after it; translate_only uses its own translation (different prompt).
+no_validator, full, and grounded share one translation per request, so they differ
+only in what happens after it; translate_only uses its own translation (different prompt).
 """
 from __future__ import annotations
 
@@ -31,10 +32,11 @@ from .sim import Plan, simulate
 from .solver import Planner
 from .spec import Charge, MissionSpec, Park, RobotUnavailable, Transport
 from .translate import ChatFn, TranslateResult, Translation, translate
+from .grounding import ground
 from .validate import validate
 from .world import World
 
-CONDITIONS = ("llm_only", "translate_only", "no_validator", "full")
+CONDITIONS = ("llm_only", "translate_only", "no_validator", "full", "grounded")
 SAFETY = {"collision", "invalid_move", "closed_zone", "keep_clear", "unavailable_robot_used", "battery_depleted"}
 DEFAULT_ACCEPT = {"plan": ["planned"], "clarify": ["clarify"], "refuse": ["refuse", "reject"],
                   "reject": ["reject", "clarify", "refuse"]}
@@ -209,15 +211,25 @@ def run_translated(world: World, req: EvalRequest, standing: list[Any], tr: Tran
     if t.kind != "plan":
         return _row(req, condition, t.kind, **base, message=t.question or t.reason)
 
-    spec = t.spec if condition == "translate_only" else merge_rules(t.spec, standing)
-    diffs = compare_specs(req.gold_spec, t.spec, standing) if req.gold_spec else None
-    if condition == "full":
+    produced = t.spec
+    notes = []
+    if condition == "grounded":
+        g = ground(world, req.request, t.spec, standing)
+        notes = g.notes
+        if g.status != "ok":
+            return _row(req, condition, g.status, **base, message=g.message, grounding_notes=notes)
+        produced = g.spec
+    spec = produced if condition == "translate_only" else merge_rules(produced, standing)
+    diffs = compare_specs(req.gold_spec, produced, standing) if req.gold_spec else None
+    if notes:
+        base["grounding_notes"] = notes
+    if condition in ("full", "grounded"):
         v = validate(world, spec)
         if v.status != "accept":
             return _row(req, condition, v.status, **base, spec_diffs=diffs, spec_exact=diffs == [],
                         message=v.explain())
     plan = Planner(world).plan(spec)
-    j = judge(world, req, standing, t.spec, plan)
+    j = judge(world, req, standing, produced, plan)
     log = j.pop("log")
     return _row(req, condition, "planned", **base, spec_diffs=diffs, spec_exact=diffs == [],
                 planner_issues=plan.meta.get("issues", []), judged=j, makespan=log["metrics"]["makespan_time"])

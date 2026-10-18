@@ -2,7 +2,7 @@
 name: Warehouse Fleet Planner
 repo: The-Pack-Man/warehouse-fleet-planner
 status: active
-one_liner: Multi-robot warehouse planning where an LLM translates requests, a classical solver plans, and a validator checks; measured against LLM-only planning on 60 requests.
+one_liner: Multi-robot warehouse planning where an LLM translates, deterministic checks ground and validate, and a classical solver plans; measured against LLM-only planning.
 problem: Supervisors speak in plain-language requests; robot fleets need exact, collision-free plans. LLMs read requests well but plan unreliably, which is unsafe for physical robots.
 user: Warehouse shift supervisor (portfolio project, synthetic warehouse).
 tags: [eval-reliability, pilot-to-prod, problem-selection, shipped-evidence]
@@ -50,6 +50,12 @@ claims:
   - id: C14
     text: Calibrated the harness with an oracle. A perfect LLM scores 100% in the full system, while designs without a validator still proceed with all 6 impossible requests, isolating the validator's contribution from model quality.
     evidence: [results/eval_20261018T035618Z_oracle.json, tests/test_eval.py]
+  - id: C15
+    text: Added a deterministic grounding check that traces every time, robot, place, and quantity in the LLM's spec back to the request. It corrects a value when the right one is unambiguous, otherwise asks or refuses, and reports every correction. It also refuses requests to set aside site rules.
+    evidence: [fleetplanner/grounding.py, tests/test_grounding.py]
+  - id: C16
+    text: Measured the fix without re-running the model by replaying the saved LLM outputs with and without grounding, and checked for over-fitting (no false positives on all 51 correct specs; a held-out set committed before the fix).
+    evidence: [scripts/replay_grounding.py, results/replay_grounding_qwen2.5-7b.json, results/replay_grounding_qwen2.5-14b.json, evals/holdout.yaml]
   - id: C9
     text: Demonstrated the simulator as referee. A naive plan that ignores an aisle closure is flagged with three closed-zone violations, while the solver's plan for the same request waits out the closure with none.
     evidence: [plans/naive_ignores_closure.json, specs/examples/aisle_closed.yaml, docs/naive.gif, tests/test_core.py]
@@ -111,9 +117,16 @@ metrics:
     method: same runs as M6 and M7
     artifact: results/eval_20261018T042518Z_qwen2.5-7b.json
     date: 2026-10-18
+  - id: M10
+    name: Grounding check on the same saved outputs, full -> grounded success (7B / 14B)
+    value: "78% -> 92% / 95% -> 98%; went-ahead-when-it-should-stop 6 -> 0 / 2 -> 0; 0 requests made worse"
+    status: measured
+    method: scripts/replay_grounding.py on the milestone 4 results (no model re-run); dev set, so optimistic until the held-out run
+    artifact: results/replay_grounding_qwen2.5-7b.json
+    date: 2026-10-18
   - id: M4
     name: Test suite passing
-    value: 132
+    value: 221
     status: measured
     method: pytest, 2026-10-18
     artifact: ""
@@ -128,7 +141,7 @@ decisions:
 
 limitations:
   - Each condition run once at temperature 0; Ollama is not fully deterministic, so differences of a request or two are noise.
-  - Some wrong specs still execute successfully (e.g. a misread deadline met by luck); a grounding check is planned but not built.
+  - Grounding gains were measured on the set its rules were designed against; the held-out run is pending.
   - The request set is small (60) and written by the system's author, so it may favor the prompt's phrasing.
   - Greedy allocation and prioritized routing are safe but not optimal.
   - Grid world with discrete time; no vehicle dynamics.

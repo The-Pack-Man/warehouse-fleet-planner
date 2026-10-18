@@ -8,18 +8,23 @@
 
 See [SPEC.md](SPEC.md) for the problem, user, success metrics, and scope.
 
-> **Status: milestone 4 of 5 done.** Measured on 60 requests with qwen2.5 7B and 14B (local, Ollama). The grounding check that targets the remaining failures is next.
+> **Status: milestone 5 in progress.** Measured on 60 requests with qwen2.5 7B and 14B. A deterministic grounding check, added to fix the failures that measurement found, raises success from 78% to 92% (7B) and 95% to 98% (14B) on the same saved model outputs. Confirmation on a held-out set is pending.
 
 ## How it works
 
 ```
-request ──► LLM translator ──► MissionSpec ──► + site rules ──► Validator ──► Solver ──► Simulator ──► Viewer
-            plan / clarify /      (typed)       (can't be       accept /       (no LLM)    (referee)
-            refuse                               removed)        clarify /
+request ──► LLM translator ──► Grounding ──► + site rules ──► Validator ──► Solver ──► Simulator ──► Viewer
+            plan / clarify /      check         (can't be       accept /       (no LLM)    (referee)
+            refuse                (no LLM)       removed)        clarify /
                                                                  reject
 ```
 
 - **Translator** ([`fleetplanner/translate.py`](fleetplanner/translate.py)): the only LLM step. It turns a request into a typed spec, a clarifying question, or a refusal, and never sees routes. Output is constrained to a JSON schema where the server supports it, validated with Pydantic, and sent back with the error for repair if invalid. Any OpenAI-compatible endpoint works; the default is local Ollama (`qwen2.5:7b`).
+- **Grounding check** ([`fleetplanner/grounding.py`](fleetplanner/grounding.py)): deterministic, no LLM. Every value in the spec must trace back to the request. If a value doesn't, the check either corrects it, when the request makes the right value unambiguous, or stops and asks. Every correction is reported to the supervisor:
+  - A deadline needs a deadline phrase. If the request says "by 2:30" and the spec has 16:30, the deadline becomes 14:30; a deadline the request never gave is removed.
+  - A robot named in the request must appear in the spec. If it's out of service, the request is refused; a robot the request never named is unpinned.
+  - A place the request never mentioned triggers a question rather than a guess, and so does a quantity it never stated.
+  - "Ignore / reopen / turn off …" aimed at a site rule is refused.
 - **Site rules** ([`rules/today.yaml`](rules/today.yaml)): standing closures and robots out of service, as a warehouse system would supply them. They are merged into every spec after translation. A request can add rules but never remove one.
 - **Validator** ([`fleetplanner/validate.py`](fleetplanner/validate.py)): deterministic, no LLM. It asks for clarification on unknown or misspelled names (with suggestions) and rejects contradictions, with a plain-language reason. Rejected examples: a job at the dock while the dock is keep-clear all shift, a job for an out-of-service robot, a deadline already past or physically impossible, a charger used as storage. Deadline checks use a lower bound on travel time, so a rejection means impossible, not just tight.
 - **World** ([`maps/warehouse.yaml`](maps/warehouse.yaml)): a 21×13 grid with five one-lane aisles, two-lane cross corridors, a charging lane, a dock, pick stations, and four robots with battery and carrying capacity.
@@ -113,6 +118,7 @@ Each request runs through four designs:
 | `translate_only` | LLM → spec → solver. The LLM is told to copy the site rules into its spec; nothing adds them back or checks the spec |
 | `no_validator` | LLM → spec, site rules merged → solver |
 | `full` | LLM → spec, site rules merged → validator → solver |
+| `grounded` | LLM → spec → grounding check, site rules merged → validator → solver |
 
 **Judged against the truth, not the LLM.** Every plan is simulated against the *correct* spec plus the site rules. A wrong deadline, a missing task, or a quietly swapped robot counts against the system even if its own plan looks fine. Reported per condition: overall success, plans executed correctly, spec exactly right, requests with safety violations, stop requests handled, went ahead when it should have stopped, stopped when it should have planned, LLM output errors, and latency.
 
@@ -127,6 +133,7 @@ Even with a perfect LLM, the two designs without a validator go ahead with all 6
 
 ```bash
 python scripts/eval_requests.py --oracle                          # self-check, no LLM needed
+python scripts/replay_grounding.py results/eval_<...>.json        # re-score saved outputs with grounding
 python scripts/eval_requests.py --models qwen2.5:7b --limit 5     # quick smoke test
 python scripts/eval_requests.py --models qwen2.5:7b,qwen2.5:14b   # full run, ~60 requests × 3 LLM calls each
 ```
@@ -168,7 +175,28 @@ Remaining failures in the full system:
 | m07 | 7B | Dropped the park task | Yes |
 | c05 | 7B | Output never parsed | Yes (error) |
 
-**Wrong specs that scored as success.** Some specs were wrong, but the robots happened to finish early enough that the outcome still counted as a success. 7B turned "by 2:30" into 16:30 (t01) and "quarter past two" into 15:15 (t03), and 14B invented a 14:30 deadline from a closure time (c10). The simulator can't flag these because the work happened to finish early, but they are exactly the plausible-but-wrong values a supervisor would never catch. They're the target for the next step, a deterministic grounding check that every time, robot, and place in the spec traces back to the request.
+### Fixing what the measurement found: the grounding check
+
+Most remaining failures were the LLM producing a plausible value the request never stated: a guessed deadline, a dropped robot, an invented location or quantity, or going along with a rule override. The grounding check catches these deterministically (see *How it works*).
+
+First, the **same saved model outputs** from the run above were replayed with and without the check. No model was called, so the check is the only thing that changes ([`7B`](results/replay_grounding_qwen2.5-7b.json), [`14B`](results/replay_grounding_qwen2.5-14b.json), via `scripts/replay_grounding.py`):
+
+| | 7B: full → grounded | 14B: full → grounded |
+|---|---|---|
+| Overall success | 78% → **92%** | 95% → **98%** |
+| Went ahead when it should have stopped | 6 → **0** | 2 → **0** |
+| Spec exactly right | 30 → 35 of 38 | 36 → 37 of 38 |
+| Requests it made worse | 0 | 0 |
+| Safety violations | 0 → 0 | 0 → 0 |
+
+It also fixed every wrong-but-lucky spec: 16:30 → 14:30 and 15:15 → 14:15 for 7B, and 14B's invented deadline removed, each reported to the supervisor.
+
+**Checks against over-fitting:**
+- **No false positives:** all 51 correct specs across both request sets pass through the check untouched (tested), and the oracle still scores 100%.
+- **Prompt v2:** the failures grounding can't reach (c07's refusal, and refusing instead of asking about unknown names) happen inside the LLM. A small prompt revision targets them. Results record `prompt_version`, so its effect is measured separately.
+- **Held-out set:** both fixes were designed while looking at failures in `requests.yaml`, so gains measured there are optimistic. [`evals/holdout.yaml`](evals/holdout.yaml) has 20 new requests, committed *before* the fix, as the honest test. **Pending a model run.**
+
+**Wrong specs that scored as success.** Some specs were wrong, but the robots happened to finish early enough that the outcome still counted as a success. 7B turned "by 2:30" into 16:30 (t01) and "quarter past two" into 15:15 (t03), and 14B invented a 14:30 deadline from a closure time (c10). The simulator can't flag these because the work happened to finish early, but they are exactly the plausible-but-wrong values a supervisor would never catch. The grounding check above now catches all three.
 
 **Caveats.** The set is small (60) and written by the system's author. Each condition was run once. Temperature 0 on Ollama isn't fully deterministic: u01 was planned in an earlier manual run but refused in this eval. Repeated runs are needed before quoting tight differences.
 
@@ -244,4 +272,4 @@ The run log (`--out`) holds every frame, event, violation, and task result. The 
 2. ~~Replay viewer~~
 3. ~~LLM translator and validator~~
 4. ~~Evaluation: 60-request suite, four conditions, oracle calibration, 7B and 14B results~~
-5. Grounding check (spec values must trace to the request), re-measured; repeated runs for variance
+5. ~~Grounding check~~ (replayed on saved outputs); prompt v2; held-out run; repeated runs for variance
