@@ -8,7 +8,7 @@
 
 See [SPEC.md](SPEC.md) for the problem, user, success metrics, and scope.
 
-> **Status: milestone 5 done.** On 20 held-out requests written before the final fixes, the full system with grounding succeeds on **85% (7B) and 90% (14B)**, against **15% and 5%** when the LLM plans routes itself, with **zero safety violations** across both models (LLM-only: 10). Every remaining failure is safe; several are the system declining something it should have done.
+> **Status: v3 measured.** On held-out set 2 (20 requests committed before the v3 code), the full system with grounding succeeds on **90% (7B) and 95% (14B)**, against **10% and 15%** when the LLM plans routes itself, with **zero safety violations** (LLM-only: 14). Every remaining failure is safe. One is a false correction by the grounding check, documented below.
 
 ## How it works
 
@@ -225,17 +225,35 @@ The dev-set re-run with prompt v2 caught a **safety violation caused by the grou
 
 The fix ([`grounding.py`](fleetplanner/grounding.py), `robots_said_down`) recognizes when a request describes a robot as unavailable. It marks that robot out of service, with a note to the supervisor, and never assigns or refuses on it; "back from maintenance" and "back online" don't count. A regression test uses 7B's exact output, and a property test checks that grounding never assigns an unavailable robot on any of the 80 requests. Replaying all six saved runs through the fixed check changes exactly one outcome, this one, from unsafe to correct ([`dev 7B replay`](results/replay_grounding_20261018T211125Z_qwen2.5-7b.json)). The held-out numbers above are unaffected.
 
-### v3: targeting the remaining failures (held-out set 2 run pending)
+### v3: targeting the remaining failures
 
 Changes, each derived from dev-set and held-out-1 failures:
 
-- **Implied overrides refused (deterministic).** If the request claims a site-restricted area is fine now ("aisle 3 looks clear now", "the spill's cleaned up"), the system refuses. Only a site lead can lift a rule. Waiting phrases ("once it's clear") and claims about unrestricted areas don't count. Targets h18 and u03.
-- **Unknown-name refusals become questions (deterministic).** If the model refuses and the only problem is a robot or aisle that doesn't exist, the supervisor gets a question instead. Refusals for overrides or out-of-service robots are always kept. Targets a03, a04, h13, h14.
-- **Prompt v3.** Requests may add their own closures, which is not a reason to refuse. A job in a temporarily closed area is planned, and the robots wait. Claiming a rule's reason is over counts as a refusal. Targets c03, c10, h02.
+- **Implied overrides refused (deterministic).** If the request claims a site-restricted area is fine now ("aisle 3 looks clear now", "the spill's cleaned up"), the system refuses. Only a site lead can lift a rule. Waiting phrases ("once it's clear") and claims about unrestricted areas don't count.
+- **Unknown-name refusals become questions (deterministic).** If the model refuses and the only problem is a robot or aisle that doesn't exist, the supervisor gets a question instead. Refusals for overrides or out-of-service robots are always kept.
+- **Prompt v3.** Requests may add their own closures, which is not a reason to refuse. A job in a temporarily closed area is planned, and the robots wait. Claiming a rule's reason is over counts as a refusal.
 
-Replaying the six saved runs through the deterministic changes fixes every targeted failure the saved outputs contain and breaks nothing ([`replays`](results/), `replay_grounding_v3_*`). **That proves the code does what it was built to do, not that it generalizes.** The fixes were designed while looking at those exact failures, and the prompt change needs a fresh model run anyway.
+**Held-out set 2** ([`evals/holdout2.yaml`](evals/holdout2.yaml)) has 20 new requests, committed before any v3 code. It has new phrasings of each targeted failure, plus ordinary requests the fixes could over-correct on. Prompt v3, one run each ([`7B`](results/eval_20261018T214222Z_holdout2_qwen2.5-7b.json), [`14B`](results/eval_20261018T222636Z_holdout2_qwen2.5-14b.json)):
 
-The test is [`evals/holdout2.yaml`](evals/holdout2.yaml): 20 new requests, committed before any v3 code. It includes new phrasings of each targeted failure, plus ordinary requests the fixes could over-correct on. One caveat: I wrote it knowing which failure types v3 targets, so it checks generalization across phrasings, not across unknown failure types. The patterns in the code come only from dev failures, and phrasings in held-out set 2 they don't cover are left uncovered. **Results: pending a model run.**
+| 20 held-out requests | LLM-only | Translate only | No validator | Full | **Full + grounding** |
+|---|---|---|---|---|---|
+| Success, 7B | 10% | 35% | 55% | 65% | **90%** |
+| Success, 14B | 15% | 75% | 85% | 90% | **95%** |
+| Requests with a safety violation (7B / 14B) | 4 / 10 | 7 / 2 | 0 / 0 | 0 / 0 | **0 / 0** |
+
+Grounding alone (same translations, full → grounded) fixed 5 requests for 7B and 1 for 14B, broke none, and made nothing unsafe. On 7B the fixes were the unknown robot R5 and aisle 9, a vague "a few totes", the nonexistent "shipping area", and the implied override "aisle 3 is safe again". The implied-override pattern was written from dev failures only, and it caught a phrasing it had never seen.
+
+**What still fails (all safe):**
+
+| Request | Model | What happened |
+|---|---|---|
+| k17 "The aisle 3 spill is **mopped up**, so go ahead… now" | 7B | Planned; the merged closure held and the robot waited. The override pattern doesn't know "mopped up", and that phrase was left uncovered on purpose, since it was only seen in the held-out set |
+| k17 (same) | 14B | Asked whether to wait for 14:20 instead of refusing. Reasonable, but not a refusal |
+| k07 "Shut aisle 1 until 14:25 and…" | 7B | Refused, wrongly claiming aisle 1 is already closed by a site rule (it's aisle 3). Prompt v3's fix for adding closures held on the dev set but not here for 7B |
+
+**A false correction by the grounding check (k10).** "By twenty to three" isn't in the time parser's vocabulary, so grounding treated 14B's correct 14:40 deadline as invented and removed it, telling the supervisor so. For 7B, which had written 15:30, removing it was half right: the wrong value went, but the right one wasn't restored. Both still counted as successes because the work finished early, which is the same kind of lucky pass that motivated grounding in the first place. The lesson for the design is that when the parser finds a time-like phrase it can't read, grounding should ask, not delete. That isn't implemented yet, because measuring it would need a third held-out set.
+
+**On the dev set** (optimistic: the fixes were designed on it), v3 reaches 98% (7B) and 100% (14B) with grounding ([`7B`](results/eval_20261018T222849Z_qwen2.5-7b.json), [`14B`](results/eval_20261018T223236Z_qwen2.5-14b.json)). Prompt v3 fixed the closure over-refusals from v2 (c03, c10) and broke nothing for 7B. For 14B, without grounding, it fixed u03 and broke a06, which is within run-to-run noise. One dev failure is new and instructive: in m07 7B dropped "send R3 to park at the dock afterwards", and grounding then assigned the remaining job to R3, because R3 was the only robot named. Grounding can't restore a task the model dropped, and attaching a named robot to the wrong task is a known limitation.
 
 ### Prompt v2: helped 14B, mixed for 7B
 
@@ -318,5 +336,5 @@ The run log (`--out`) holds every frame, event, violation, and task result. The 
 3. ~~LLM translator and validator~~
 4. ~~Evaluation: 60-request suite, four conditions, oracle calibration, 7B and 14B results~~
 5. ~~Grounding check, prompt v2, held-out evaluation~~
-6. v3: ~~implied overrides, unknown-name refusals → questions, prompt v3, held-out set 2~~; held-out-2 model run pending
-7. Repeated runs for variance
+6. ~~v3: implied overrides, unknown-name refusals → questions, prompt v3, measured on held-out set 2~~
+7. Next: ask instead of deleting when a time phrase can't be parsed (k10); match named robots to the clause that mentions them (m07); repeated runs for variance; a third held-out set to measure them

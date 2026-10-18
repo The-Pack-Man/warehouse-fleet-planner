@@ -2,7 +2,7 @@
 name: Warehouse Fleet Planner
 repo: The-Pack-Man/warehouse-fleet-planner
 status: active
-one_liner: Multi-robot warehouse planning where an LLM translates, deterministic checks ground and validate, and a classical solver plans; 85-90% vs 5-15% for LLM-only planning on held-out requests, zero safety violations.
+one_liner: Multi-robot warehouse planning where an LLM translates, deterministic checks ground and validate, and a classical solver plans; 90-95% vs 10-15% for LLM-only planning on a second held-out set, zero safety violations.
 problem: Supervisors speak in plain-language requests; robot fleets need exact, collision-free plans. LLMs read requests well but plan unreliably, which is unsafe for physical robots.
 user: Warehouse shift supervisor (portfolio project, synthetic warehouse).
 tags: [eval-reliability, pilot-to-prod, problem-selection, shipped-evidence]
@@ -144,6 +144,20 @@ metrics:
     method: same runs as M11
     artifact: results/eval_20261018T210939Z_holdout_qwen2.5-14b.json
     date: 2026-10-18
+  - id: M13
+    name: Held-out set 2 (20 requests committed before v3 code), full system with grounding vs LLM-only planning (7B / 14B)
+    value: "90% vs 10% / 95% vs 15%; safety violations 0 vs 4 / 0 vs 10"
+    status: measured
+    method: scripts/eval_requests.py --requests evals/holdout2.yaml, prompt v3, temperature 0, single run
+    artifact: results/eval_20261018T214222Z_holdout2_qwen2.5-7b.json
+    date: 2026-10-18
+  - id: M14
+    name: Held-out set 2, effect of the grounding check alone (same translations, full -> grounded)
+    value: "7B 65% -> 90% (5 fixed, 0 broken); 14B 90% -> 95% (1 fixed, 0 broken); one correct deadline wrongly removed (k10)"
+    status: measured
+    method: same runs as M13
+    artifact: results/eval_20261018T222636Z_holdout2_qwen2.5-14b.json
+    date: 2026-10-18
   - id: M4
     name: Test suite passing
     value: 323
@@ -161,9 +175,10 @@ decisions:
 
 limitations:
   - Each condition run once at temperature 0; Ollama is not fully deterministic, so differences of a request or two are noise.
-  - Held-out failures remain (all safe): an implied rule override planned instead of refused (h18), an over-cautious refusal (h02), refusing instead of asking about unknown names on 7B (h13, h14).
-  - Prompt v2 introduced an over-refusal on 7B for requests that add a closure (c03, c10).
-  - Held-out set 1 has been used to design v3 and is now effectively a dev set; v3 is measured on held-out set 2 (run pending). No v3 results may be cited until then.
+  - Remaining held-out-2 failures (all safe): an implied override with an unseen phrasing ("mopped up") planned or questioned instead of refused (k17); 7B wrongly refused adding a closure (k07).
+  - Both held-out sets have now been used; further fixes need a new one.
+  - The grounding check's time parser has a fixed vocabulary; an unrecognized phrasing ("twenty to three") made it remove a correct deadline (reported to the supervisor, but wrong).
+  - Grounding can't restore a task the model dropped, and may attach a named robot to the wrong task (m07).
   - The request set is small (60) and written by the system's author, so it may favor the prompt's phrasing.
   - Greedy allocation and prioritized routing are safe but not optimal.
   - Grid world with discrete time; no vehicle dynamics.
