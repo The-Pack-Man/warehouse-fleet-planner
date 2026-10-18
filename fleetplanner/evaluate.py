@@ -76,10 +76,34 @@ def _task_key(t) -> tuple:
     return ("park", t.location, t.robot, t.deadline)
 
 
+SHIFT_START = "14:00"   # a window starting at or before the shift start is the same as no start
+
+
 def _rule_key(c) -> tuple:
     if isinstance(c, RobotUnavailable):
         return ("robot_unavailable", c.robot)
-    return (c.type, c.zone, c.start, c.end)
+    start = None if c.start is not None and c.start <= SHIFT_START else c.start
+    return (c.type, c.zone, start, c.end)
+
+
+def rescore_diffs(diffs: list[str] | None) -> list[str] | None:
+    """Re-apply rule normalization to stored diff strings (for results scored before it existed)."""
+    import ast
+    if diffs is None:
+        return None
+    missing, unexpected, other = Counter(), Counter(), []
+    for d in diffs:
+        for prefix, bucket in (("missing rule ", missing), ("unexpected rule ", unexpected)):
+            if d.startswith(prefix):
+                k = ast.literal_eval(d[len(prefix):])
+                if k[0] != "robot_unavailable" and k[2] is not None and k[2] <= SHIFT_START:
+                    k = (k[0], k[1], None, k[3])
+                bucket[k] += 1
+                break
+        else:
+            other.append(d)
+    return other + [f"missing rule {k}" for k in (missing - unexpected).elements()] + \
+        [f"unexpected rule {k}" for k in (unexpected - missing).elements()]
 
 
 def compare_specs(gold: MissionSpec, got: MissionSpec, standing: list[Any]) -> list[str]:

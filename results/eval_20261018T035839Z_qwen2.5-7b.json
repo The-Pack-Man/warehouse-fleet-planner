@@ -938,5 +938,72 @@
    "overcautious": false,
    "went_ahead_wrongly": false
   }
- ]
+ ],
+ "rescored": {
+  "at": "2026-10-18T04:43:44.497625+00:00",
+  "reason": "Rule windows starting at or before the shift start (14:00) now match rules with no start time.",
+  "rows_changed": 0,
+  "previous_summary": {
+   "llm_only": {
+    "success": 0.0,
+    "n": 5,
+    "by_category": {
+     "simple": 0.0
+    },
+    "plan_requests_executed_correctly": "0/5",
+    "spec_exact": "2/5",
+    "requests_with_safety_violations": 1,
+    "stop_requests_handled_correctly": "0/0",
+    "went_ahead_when_it_should_stop": 0,
+    "stopped_when_it_should_plan": 1,
+    "llm_errors": 2,
+    "median_latency_s": 4.08
+   },
+   "translate_only": {
+    "success": 1.0,
+    "n": 5,
+    "by_category": {
+     "simple": 1.0
+    },
+    "plan_requests_executed_correctly": "5/5",
+    "spec_exact": "5/5",
+    "requests_with_safety_violations": 0,
+    "stop_requests_handled_correctly": "0/0",
+    "went_ahead_when_it_should_stop": 0,
+    "stopped_when_it_should_plan": 0,
+    "llm_errors": 0,
+    "median_latency_s": 1.17
+   },
+   "no_validator": {
+    "success": 1.0,
+    "n": 5,
+    "by_category": {
+     "simple": 1.0
+    },
+    "plan_requests_executed_correctly": "5/5",
+    "spec_exact": "5/5",
+    "requests_with_safety_violations": 0,
+    "stop_requests_handled_correctly": "0/0",
+    "went_ahead_when_it_should_stop": 0,
+    "stopped_when_it_should_plan": 0,
+    "llm_errors": 0,
+    "median_latency_s": 1.06
+   },
+   "full": {
+    "success": 1.0,
+    "n": 5,
+    "by_category": {
+     "simple": 1.0
+    },
+    "plan_requests_executed_correctly": "5/5",
+    "spec_exact": "5/5",
+    "requests_with_safety_violations": 0,
+    "stop_requests_handled_correctly": "0/0",
+    "went_ahead_when_it_should_stop": 0,
+    "stopped_when_it_should_plan": 0,
+    "llm_errors": 0,
+    "median_latency_s": 1.06
+   }
+  }
+ }
 }

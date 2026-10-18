@@ -2,7 +2,7 @@
 name: Warehouse Fleet Planner
 repo: The-Pack-Man/warehouse-fleet-planner
 status: active
-one_liner: Multi-robot warehouse planning where an LLM translates requests, a classical solver plans, and a validator checks; evaluation harness built, model results pending.
+one_liner: Multi-robot warehouse planning where an LLM translates requests, a classical solver plans, and a validator checks; measured against LLM-only planning on 60 requests.
 problem: Supervisors speak in plain-language requests; robot fleets need exact, collision-free plans. LLMs read requests well but plan unreliably, which is unsafe for physical robots.
 user: Warehouse shift supervisor (portfolio project, synthetic warehouse).
 tags: [eval-reliability, pilot-to-prod, problem-selection, shipped-evidence]
@@ -83,6 +83,34 @@ metrics:
     method: scripts/stress.py --seeds 5000, validator run on each random shift before planning
     artifact: results/stress_20261018T032455Z.json
     date: 2026-10-18
+  - id: M6
+    name: Overall success on 60 requests, full system vs LLM-only planning (qwen2.5 14B, local)
+    value: "95% vs 12%"
+    status: measured
+    method: scripts/eval_requests.py, judged in the simulator against gold specs plus site rules; temperature 0, single run
+    artifact: results/eval_20261018T044209Z_qwen2.5-14b.json
+    date: 2026-10-18
+  - id: M7
+    name: Overall success on 60 requests, full system vs LLM-only planning (qwen2.5 7B, local)
+    value: "78% vs 15%"
+    status: measured
+    method: same as M6
+    artifact: results/eval_20261018T042518Z_qwen2.5-7b.json
+    date: 2026-10-18
+  - id: M8
+    name: Requests with a safety violation, by design (14B / 7B)
+    value: "LLM-only 25 / 11; LLM carries rules itself 6 / 16; full system 0 / 0"
+    status: measured
+    method: same runs as M6 and M7
+    artifact: results/eval_20261018T044209Z_qwen2.5-14b.json
+    date: 2026-10-18
+  - id: M9
+    name: Validator contribution (full vs no-validator success, 7B / 14B)
+    value: "+13 / +7 points; infeasible requests 0% -> 100% for both"
+    status: measured
+    method: same runs as M6 and M7
+    artifact: results/eval_20261018T042518Z_qwen2.5-7b.json
+    date: 2026-10-18
   - id: M4
     name: Test suite passing
     value: 132
@@ -92,13 +120,15 @@ metrics:
     date: 2026-10-18
 
 decisions:
+  - Measured the design against LLM-only planning instead of asserting it; reported the full system's remaining failures, including the ones that are safe but wrong.
   - Kept the LLM out of planning. It will only translate requests into a typed spec, which a classical solver plans and a validator checks.
   - Plans are plain per-robot action lists judged by an independent simulator, so an LLM-written baseline can be compared fairly.
   - Chose prioritized planning with space-time A* over optimal multi-agent search (CBS) for speed and simplicity, accepting non-optimal plans.
   - A battery floor is enforced on actual routes, because allocation estimates ignore detours.
 
 limitations:
-  - No measured LLM results yet. The harness is built and calibrated; model runs (qwen2.5 7B/14B) are pending.
+  - Each condition run once at temperature 0; Ollama is not fully deterministic, so differences of a request or two are noise.
+  - Some wrong specs still execute successfully (e.g. a misread deadline met by luck); a grounding check is planned but not built.
   - The request set is small (60) and written by the system's author, so it may favor the prompt's phrasing.
   - Greedy allocation and prioritized routing are safe but not optimal.
   - Grid world with discrete time; no vehicle dynamics.
